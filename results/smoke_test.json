@@ -1,0 +1,76 @@
+{
+  "run_id": "v026-gate-20260726",
+  "status": "passed",
+  "path": "A",
+  "path_qualification": "MRV2 requires the merged v0.26 WSL opt-in VLLM_WSL2_ENABLE_PIN_MEMORY=1",
+  "git_commit": "f2654939e69b4069b13977e9aef3e31d4dcaf051",
+  "environment": {
+    "venv": "/home/xiaoda/vllm-lab/.venv-v026",
+    "python": "3.12.13",
+    "vllm": "0.26.0",
+    "torch": "2.11.0+cu129",
+    "torch_cuda": "12.9",
+    "driver": "596.49",
+    "driver_reported_cuda": "13.2",
+    "gpu": "NVIDIA GeForce RTX 2060",
+    "compute_capability": "7.5",
+    "gpu_memory_bytes": 6442123264
+  },
+  "default_wsl_probe": {
+    "pin_memory": false,
+    "uva_available": false,
+    "result": "RuntimeError: UVA is not available"
+  },
+  "official_wsl_opt_in_probe": {
+    "environment": {
+      "VLLM_WSL2_ENABLE_PIN_MEMORY": "1",
+      "VLLM_USE_V2_MODEL_RUNNER": "1"
+    },
+    "pin_memory": true,
+    "uva_available": true,
+    "uva_buffer_round_trip": "passed"
+  },
+  "offline": {
+    "status": "passed",
+    "independent_engine_starts": 3,
+    "total_generation_calls": 5,
+    "model_runner": "V2",
+    "attention_backend": "TRITON_ATTN",
+    "flash_attention_2": "unsupported on compute capability 7.5",
+    "flashinfer_sampler": "unsupported on compute capability 7.5; fallback used",
+    "model": "/home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct",
+    "dtype": "float16",
+    "max_model_len": 512,
+    "gpu_memory_utilization": 0.7,
+    "enforce_eager": true,
+    "kv_cache_gib": 2.95,
+    "kv_cache_tokens": 257824,
+    "generation_elapsed_seconds": [
+      2.154155412000364,
+      0.20311260100015716,
+      0.21110330100009378,
+      0.28962850200014145,
+      0.29031000200029666
+    ]
+  },
+  "openai_server": {
+    "status": "passed",
+    "health_http_status": 200,
+    "chat_completions_http_status": 200,
+    "response_content": "Ready.",
+    "model_runner": "V2",
+    "attention_backend": "TRITON_ATTN",
+    "shutdown_observation": "SIGINT after the successful response logged EngineDeadError and one leaked semaphore during teardown"
+  },
+  "artifacts": {
+    "raw_artifact_directory": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726",
+    "offline_result": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726/offline_smoke.json",
+    "offline_run2_result": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726/offline_smoke_run2.json",
+    "offline_run3_result": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726/offline_smoke_run3.json",
+    "offline_log": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726/offline_mrv2.log",
+    "offline_run2_log": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726/offline_mrv2_run2.log",
+    "offline_run3_log": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726/offline_mrv2_run3.log",
+    "server_log": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726/server_mrv2.log",
+    "server_response": "/home/xiaoda/vllm-lab/outputs/v026-gate-20260726/server_response.json"
+  }
+}
