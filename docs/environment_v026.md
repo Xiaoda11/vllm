@@ -53,12 +53,11 @@ The release does not publish a `cu130` wheel asset. The installed native
 binaries therefore use the exact v0.26.0 `cu129` x86_64 release wheel. The
 596.49 driver runs this older CUDA runtime successfully.
 
-The historical `/home/xiaoda/vllm-lab/.venv` package metadata remains
-unchanged at vLLM 0.15.0+precompiled and PyTorch 2.9.1+cu130. It is an editable
-install pointing at this same repository, so importing it while the checkout
-is on the v0.26 branch resolves the current source tree. A v0.15 run must first
-use the preserved `exp/scheduler-trace` source (preferably through a dedicated
-worktree); the environment alone does not pin the checked-out source.
+The historical `/home/xiaoda/vllm-lab/.venv` was removed on 2026-07-26 after
+the v0.26 baseline was committed and its script references were checked. v0.15
+is retained only as the `exp/scheduler-trace` Git branch/commits and archived
+raw outputs. Source comparisons use `git show`; v0.15 is no longer a runnable
+project lane.
 
 ## Measured gate results
 
