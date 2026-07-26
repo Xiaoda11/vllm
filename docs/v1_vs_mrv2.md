@@ -1,21 +1,21 @@
 # vLLM v0.15 V1 → v0.26 MRV2 差异地图
 
-Date: 2026-07-26
+日期：2026-07-26
 
-Status: Day 2 source map; no Scheduler instrumentation or policy change
+状态：Day 2 源码地图；尚未添加 Scheduler instrumentation 或修改调度策略
 
-## Scope and evidence rule
+## 范围与证据规则
 
-This document compares:
+本文对比：
 
-- historical V1 source:
-  `f176443446f659dbab5315e056e605d8984fd976`;
-- current MRV2 source:
-  `f2654939e69b4069b13977e9aef3e31d4dcaf051`;
-- measured v0.26 execution path from Day 1:
-  MRV2 + `TRITON_ATTN`.
+- 历史 V1 源码：
+  `f176443446f659dbab5315e056e605d8984fd976`；
+- 当前 MRV2 源码：
+  `f2654939e69b4069b13977e9aef3e31d4dcaf051`；
+- Day 1 实测的 v0.26 执行路径：
+  MRV2 + `TRITON_ATTN`。
 
-The goal is limited to the path needed by Scheduler Trace:
+本文只关注 Scheduler Trace 所需的链路：
 
 ```text
 SchedulerOutput
@@ -26,39 +26,38 @@ SchedulerOutput
 → GPU input metadata
 ```
 
-It is not a complete V1/MRV2 feature comparison.
+这不是一份完整的 V1/MRV2 功能对比。
 
-### Hypothesis
+### 假设
 
-MRV2 reduces async-scheduling bookkeeping by separating persistent
-request-lifetime state from per-step batch order. Requests keep stable rows;
-each step supplies an indirection that gathers those rows into the required
-execution order.
+MRV2 将 request 生命周期内的 persistent state 与每一步的 batch 顺序分离，
+从而减少异步调度所需的状态维护。每个 request 在存活期间持有固定 row，
+每一步通过一层间接映射，按本次执行顺序 gather 对应的 rows。
 
-### Observables
+### 观测项
 
-- ownership and lifetime of request state;
-- new/cached/finished/preempted request handling;
-- row allocation and reuse;
-- CPU-to-GPU state update mechanism;
-- per-step request ordering and `idx_mapping`;
-- buffers that can be touched by CPU step N+1 while GPU step N is in flight.
+- request state 的所有权与生命周期；
+- new/cached/finished/preempted request 的处理方式；
+- row 的分配与复用；
+- CPU 到 GPU 的状态更新机制；
+- 每一步的 request 顺序与 `idx_mapping`；
+- CPU 准备 step N+1 时，哪些 buffer 可能仍被 GPU step N 使用。
 
-### Decision criteria
+### 判定标准
 
-The map is sufficient when it can answer the six Day 2 questions without
-claiming unmeasured runtime state:
+当这张地图能够回答以下六个 Day 2 问题，并且不把未实测的运行状态写成
+实测结论时，即视为完成：
 
-1. How does `SchedulerOutput` reach `GPUModelRunner.update_requests`?
-2. How does a request obtain a persistent row?
-3. What long-lived state is stored in `RequestState`?
-4. Why does `StagedWriteTensor` require UVA?
-5. How does `idx_mapping` form the execution order?
-6. How can the CPU prepare step N+1 without corrupting GPU step N?
+1. `SchedulerOutput` 如何到达 `GPUModelRunner.update_requests`？
+2. 一个 request 如何获得 persistent row？
+3. `RequestState` 保存哪些长期状态？
+4. `StagedWriteTensor` 为什么需要 UVA？
+5. `idx_mapping` 如何组织执行顺序？
+6. CPU 如何在不破坏 GPU step N 的情况下准备 step N+1？
 
-## Stable outer control flow
+## 保持稳定的外层控制流
 
-The high-level Engine Core loop remains recognizable across both revisions:
+两个版本的 Engine Core 高层循环仍然相似：
 
 ```text
 Scheduler.schedule()
@@ -69,7 +68,7 @@ Scheduler.schedule()
 → Scheduler.update_from_output()
 ```
 
-In v0.26, the direct single-step path is:
+v0.26 的直接单步路径为：
 
 ```text
 EngineCore.step
@@ -82,26 +81,26 @@ EngineCore.step
   scheduler.update_from_output
 ```
 
-`EngineCore.step_with_batch_queue` extends this with a queue of in-flight
-batches. It tries to schedule another batch before blocking on the oldest
-result. The major V1 → MRV2 change is therefore inside the worker/model-runner
-state preparation, rather than a completely new Scheduler API.
+`EngineCore.step_with_batch_queue` 在此基础上维护 in-flight batches 队列。
+它会尝试先调度下一批，再阻塞等待最早提交的结果。因此，V1 → MRV2 的主要
+变化发生在 worker/model runner 的状态准备内部，而不是替换整套 Scheduler
+API。
 
-## SchedulerOutput → MRV2 request update
+## SchedulerOutput → MRV2 request 更新
 
-`Scheduler.schedule()` constructs a `SchedulerOutput` containing:
+`Scheduler.schedule()` 构造的 `SchedulerOutput` 包含：
 
-| Field | Meaning for the model runner |
+| 字段 | 对 model runner 的含义 |
 |---|---|
-| `scheduled_new_reqs` | Full data for first-time or re-added requests |
-| `scheduled_cached_reqs` | Incremental data for requests already cached |
-| `num_scheduled_tokens` | Per-request token count for this step |
-| `total_num_scheduled_tokens` | Global scheduled token count |
-| `finished_req_ids` | State that can be released |
-| `preempted_req_ids` | MRV2 state treated as finished |
-| cached `new_block_ids` | KV block-table extension |
+| `scheduled_new_reqs` | 首次加入或重新加入的 request 完整数据 |
+| `scheduled_cached_reqs` | 已缓存 request 的增量数据 |
+| `num_scheduled_tokens` | 本 step 每个 request 的 token 数 |
+| `total_num_scheduled_tokens` | 本 step 全局调度的 token 总数 |
+| `finished_req_ids` | 可以释放的 request state |
+| `preempted_req_ids` | 在 MRV2 中按 finished 处理的 state |
+| cached `new_block_ids` | KV block table 的增量扩展 |
 
-The v0.26 call order inside `GPUModelRunner.execute_model` is:
+v0.26 的 `GPUModelRunner.execute_model` 按以下顺序调用：
 
 ```text
 update_pp_decode_requests()
@@ -115,42 +114,41 @@ prepare_attn()
 model forward
 ```
 
-Important distinction:
+需要区分：
 
-- `add_requests()` handles full state for new/re-added requests and applies
-  their staged request/model/sampler writes;
-- `update_requests()` handles cached-request diffs, especially
-  `num_computed_tokens`, new KV block IDs, fresh-block zeroing, and KV
-  copy-on-write operations;
-- the call to `update_requests()` is not made by the Scheduler directly. The
-  SchedulerOutput crosses Engine Core, Executor, and GPUWorker first.
+- `add_requests()` 处理 new/re-added requests 的完整状态，并应用 request、
+  model 和 sampler 的 staged writes；
+- `update_requests()` 处理 cached-request diffs，重点包括
+  `num_computed_tokens`、新增 KV block IDs、fresh block 清零和 KV
+  copy-on-write 操作；
+- Scheduler 不会直接调用 `update_requests()`。`SchedulerOutput` 会先经过
+  Engine Core、Executor 和 GPUWorker，最后到达 model runner。
 
-## Persistent state: V1 versus MRV2
+## Persistent state：V1 与 MRV2 对比
 
-| Concern | v0.15 V1 | v0.26 MRV2 |
+| 关注点 | v0.15 V1 | v0.26 MRV2 |
 |---|---|---|
-| Python request backup | `dict[req_id, CachedRequestState]` | No equivalent general backup object |
-| Persistent batch | `InputBatch` mixes state and direct model inputs | Persistent state is separate from per-step `InputBatch` |
-| Row lifetime | Rows may be removed, filled and condensed | Fixed row for active lifetime |
-| Unscheduled request | Removed from V1 persistent batch but retained in cached request dict | State stays in its slot unless finished/preempted |
-| Preemption | Cached state supports later resume/reinsert | Treated as finish; resume is a fresh add |
-| Per-step order | Persistent `InputBatch` is reordered/condensed | `idx_mapping` gathers fixed rows in step order |
-| Token state | CPU tensor/list centric, then copied/prepared | GPU/UVA persistent tensors plus CPU mirrors where needed |
-| KV block table | Part of V1 `InputBatch` layout | Separate persistent `BlockTables`, gathered using `idx_mapping` |
-| Async protection | `synchronize_input_prep` barrier around preprocessing | Async-first buffers, staged writes, and round-robin UVA pools |
+| Python request 备份 | `dict[req_id, CachedRequestState]` | 没有等价的通用备份对象 |
+| Persistent batch | `InputBatch` 同时混合状态和直接模型输入 | Persistent state 与每 step 的 `InputBatch` 分离 |
+| Row 生命周期 | Row 可能被删除、填洞和压紧 | active lifetime 内固定 row |
+| 未被调度的 request | 从 V1 persistent batch 移除，但保留在 cached request dict | 除非 finished/preempted，否则 state 留在原 slot |
+| Preemption | cached state 支持后续恢复并重新插入 | 按 finish 处理；恢复时重新 add |
+| 每 step 顺序 | 重排或压紧 persistent `InputBatch` | 用 `idx_mapping` 按 step 顺序 gather 固定 rows |
+| Token state | 以 CPU tensor/list 为主，之后 copy/prepare | GPU/UVA persistent tensors，必要处保留 CPU mirror |
+| KV block table | 属于 V1 `InputBatch` 布局 | 独立的 persistent `BlockTables`，通过 `idx_mapping` gather |
+| 异步保护 | preprocessing 周围使用 `synchronize_input_prep` barrier | async-first buffers、staged writes 和 round-robin UVA pools |
 
-V1's `_update_states()` removes unscheduled rows, re-adds requests, calls
-`InputBatch.condense()`, may reorder the batch for the backend, and refreshes
-metadata. `CachedRequestState` is needed because active state may no longer be
-present in the persistent batch.
+V1 的 `_update_states()` 会移除未调度的 rows、重新加入 requests、调用
+`InputBatch.condense()`、根据 backend 要求调整 batch 顺序并刷新 metadata。
+由于 active state 可能暂时不在 persistent batch 中，所以需要
+`CachedRequestState`。
 
-MRV2 keeps request-lifetime state independent of the current step's compact
-batch. This removes the need to move every request's persistent row when the
-step order changes.
+MRV2 将 request-lifetime state 与当前 step 的紧凑 batch 分离。执行顺序
+变化时，不再需要移动每个 request 的 persistent row。
 
-## How a request obtains a persistent row
+## Request 如何获得 persistent row
 
-MRV2 `RequestState` initializes:
+MRV2 的 `RequestState` 初始化：
 
 ```text
 req_id_to_index
@@ -158,83 +156,80 @@ index_to_req_id
 free_indices = [0, ..., max_num_reqs - 1]
 ```
 
-When `add_requests()` receives a new request:
+当 `add_requests()` 收到新 request 时：
 
-1. `RequestState.add_request()` pops one free index.
-2. Both request-ID mappings are populated.
-3. Request-lifetime fields are initialized at that index.
-4. Model-specific, block-table, LoRA, and sampler state use the same request
-   index.
-5. Staged writes are applied before the forward pass.
+1. `RequestState.add_request()` 从 free indices 中取出一个 index。
+2. 写入 request ID 的双向映射。
+3. 在该 index 初始化 request-lifetime fields。
+4. Model-specific、block-table、LoRA 和 sampler state 使用相同的 request
+   index。
+5. Forward pass 之前应用 staged writes。
 
-The row remains assigned until `remove_request()` is called. Finish and
-preemption both release it. A resumed preempted request is added again and may
-receive a different row.
+这个 row 会一直保留到调用 `remove_request()`。Finish 和 preemption 都会
+释放 row；被 preempt 的 request 恢复时会重新加入，并可能获得不同的 row。
 
-“Persistent row” therefore means stable for one active lifetime, not stable
-forever across preemption/resume.
+因此，“persistent row”表示在一次 active lifetime 内保持稳定，而不是跨越
+preemption/resume 永久固定。
 
-## What RequestState stores
+## RequestState 保存的状态
 
-The v0.26 `vllm/v1/worker/gpu/states.py::RequestState` owns:
+v0.26 的 `vllm/v1/worker/gpu/states.py::RequestState` 持有：
 
-| State | Representation | Purpose |
+| 状态 | 表示形式 | 用途 |
 |---|---|---|
-| request ID ↔ row | Python dicts | Stable row lookup |
-| free rows | Python list | Slot allocation/reuse |
-| `all_token_ids` | UVA-backed `StagedWriteTensor` | Full token history without a huge GPU duplicate |
-| `prompt_len` | `UvaBackedTensor` | Original user prompt length |
-| `prefill_len` | `UvaBackedTensor` | Tokens that must pass through prefill |
-| `total_len` | GPU `StagedWriteTensor` | Prompt plus generated length |
-| computed prefill count | NumPy array | CPU-side prefill-phase decisions |
-| `num_computed_tokens` | GPU staged tensor + optimistic NumPy mirror | Progress visible to GPU and CPU prep |
-| last sampled tokens | GPU tensor | Next decode/input preparation |
-| maximum sequence length | NumPy array | Request stopping/PP metadata |
-| draft tokens | GPU tensor | Speculative path |
-| next prefill tokens | GPU tensor | Prefill input preparation |
+| request ID ↔ row | Python dicts | 稳定的 row 查询 |
+| free rows | Python list | slot 分配与复用 |
+| `all_token_ids` | UVA-backed `StagedWriteTensor` | 保存完整 token history，避免巨大的 GPU 副本 |
+| `prompt_len` | `UvaBackedTensor` | 原始用户 prompt 长度 |
+| `prefill_len` | `UvaBackedTensor` | 必须经过 prefill 的 token 数 |
+| `total_len` | GPU `StagedWriteTensor` | prompt 与 generated tokens 的总长度 |
+| computed prefill count | NumPy array | CPU 侧的 prefill phase 判断 |
+| `num_computed_tokens` | GPU staged tensor + optimistic NumPy mirror | GPU 可见进度与 CPU 输入准备 |
+| last sampled tokens | GPU tensor | 下一次 decode/input 准备 |
+| maximum sequence length | NumPy array | request stopping/PP metadata |
+| draft tokens | GPU tensor | speculative path |
+| next prefill tokens | GPU tensor | prefill 输入准备 |
 
-KV block tables, sampler configuration, LoRA state, multimodal state, and
-model-specific recurrent state are separate components keyed by the same row.
-They should not be described as fields of `RequestState`.
+KV block tables、sampler configuration、LoRA state、multimodal state 和
+model-specific recurrent state 属于独立组件，只是使用同一个 row 作为 key。
+它们不应被描述为 `RequestState` 自身的字段。
 
-## Why StagedWriteTensor uses UVA
+## StagedWriteTensor 为什么使用 UVA
 
-`StagedWriteTensor` avoids copying an entire persistent tensor when only a few
-rows or slices change:
+只有少数 rows 或 slices 发生变化时，`StagedWriteTensor` 可以避免复制整个
+persistent tensor：
 
 ```text
-stage row/start/content diffs on CPU
-→ pack write metadata
-→ expose/copy metadata through an available UVA buffer
-→ copy packed contents asynchronously
-→ launch a Triton kernel that patches the persistent tensor
+在 CPU 上暂存 row/start/content diffs
+→ 打包 write metadata
+→ 通过可用的 UVA buffer 暴露或复制 metadata
+→ 异步复制打包后的 contents
+→ 启动 Triton kernel 修改 persistent tensor
 ```
 
-UVA is used in two distinct ways:
+UVA 在这里有两类用途：
 
-1. The write indices, starts, and cumulative lengths are supplied through
-   `UvaBufferPool`, so the GPU kernel can read pinned CPU memory without a
-   blocking metadata copy.
-2. Very large, infrequently accessed state such as `all_token_ids` can itself
-   be UVA-backed, avoiding a multi-gigabyte GPU duplicate.
+1. Write indices、starts 和 cumulative lengths 通过 `UvaBufferPool`
+   提供，使 GPU kernel 能直接读取 pinned CPU memory，不需要阻塞式
+   metadata copy。
+2. `all_token_ids` 这类体积很大但访问不频繁的状态可以直接由 UVA-backed
+   memory 承载，从而避免数 GiB 的 GPU 副本。
 
-This explains the Day 1 WSL gate: MRV2 constructs these buffers during
-initialization, so disabled pinned memory makes UVA unavailable before model
-execution begins.
+这也解释了 Day 1 的 WSL Gate：MRV2 在初始化阶段就会构造这些 buffers，
+因此 pinned memory 被禁用时，UVA 会在模型开始执行前变得不可用。
 
-## How idx_mapping defines per-step order
+## idx_mapping 如何定义每 step 顺序
 
-Persistent row order and execution order are intentionally different.
+Persistent row 顺序与实际执行顺序是有意分离的。
 
-In `prepare_inputs()`:
+`prepare_inputs()` 执行以下步骤：
 
-1. `sort_batch_req_ids()` chooses the request order required for the step,
-   including the decode-query-length ordering rule.
-2. Each request ID is looked up in `req_states.req_id_to_index`.
-3. The resulting NumPy vector is copied asynchronously to GPU as
-   `idx_mapping`.
+1. `sort_batch_req_ids()` 根据本 step 的要求选择 request 顺序，其中包含
+   decode query length 的排序规则。
+2. 通过 `req_states.req_id_to_index` 查询每个 request ID。
+3. 将得到的 NumPy vector 异步复制到 GPU，作为 `idx_mapping`。
 
-Example:
+例如：
 
 | Persistent row | Active request |
 |---:|---|
@@ -242,113 +237,109 @@ Example:
 | 7 | A |
 | 11 | C |
 
-If the step order is `[A, C, B]`, then:
+如果本 step 的执行顺序为 `[A, C, B]`，则：
 
 ```text
 idx_mapping = [7, 11, 2]
 ```
 
-GPU preparation kernels use this mapping to read persistent token/progress
-state and create `input_ids`, positions, sequence lengths, and sampling
-metadata. `BlockTables.gather_block_tables()` uses the same mapping to produce
-the compact block-table view for the forward pass.
+GPU preparation kernels 使用该映射读取 persistent token/progress state，
+生成 `input_ids`、positions、sequence lengths 和 sampling metadata。
+`BlockTables.gather_block_tables()` 使用同一映射，为 forward pass 生成紧凑
+的 block-table view。
 
-With speculative decoding, `expanded_idx_mapping` repeats/expands the mapping
-so multiple logits rows still refer back to the correct persistent request
-state.
+使用 speculative decoding 时，`expanded_idx_mapping` 会重复或展开原始
+mapping，使多个 logits rows 仍然能够定位到正确的 persistent request
+state。
 
-## Why step N+1 does not corrupt step N
+## 为什么 step N+1 不会破坏 step N
 
-MRV2's async-first design relies on several cooperating mechanisms:
+MRV2 的 async-first 设计依赖以下机制协同工作：
 
-1. Engine Core submits model execution non-blockingly and may enqueue another
-   batch before consuming the oldest result.
-2. Persistent CPU source state is generally not itself the pinned buffer being
-   read by an in-flight GPU copy. Temporary pinned copies separate CPU mutation
-   from GPU reads.
-3. UVA metadata uses a round-robin `UvaBufferPool`. Its depth is configured to
-   be at least the maximum number of concurrent in-flight batches, so step
-   N+1 does not immediately overwrite step N's metadata buffer.
-4. Large persistent GPU state is updated by staged-write kernels. Updates and
-   subsequent consumers are enqueued on the CUDA stream, preserving device
-   execution order without a CPU synchronization barrier.
-5. Per-step `idx_mapping` and compact input buffers describe that step; the
-   fixed request rows do not need to be reshuffled under the GPU.
+1. Engine Core 以 non-blocking 方式提交模型执行，并且可以在消费最早结果
+   之前继续将下一批加入队列。
+2. Persistent CPU source state 通常不直接充当 in-flight GPU copy 正在读取
+   的 pinned buffer。临时 pinned copies 将 CPU mutation 与 GPU reads
+   隔离。
+3. UVA metadata 使用 round-robin `UvaBufferPool`。其深度至少等于允许同时
+   in-flight 的最大 batch 数，因此 step N+1 不会立即覆盖 step N 的
+   metadata buffer。
+4. 大型 persistent GPU state 通过 staged-write kernels 更新。更新操作和
+   后续消费者按顺序进入 CUDA stream，依赖设备执行顺序，不需要 CPU
+   synchronization barrier。
+5. 每 step 的 `idx_mapping` 与紧凑 input buffers 只描述当前 step，固定的
+   request rows 不需要在 GPU 执行过程中重新排列。
 
-This does not mean all races are impossible by construction. Any new MRV2
-feature that reuses a pinned CPU buffer, calls `.item()`, performs an unpinned
-blocking transfer, or writes a shared surface outside these lifetime rules can
-reintroduce a barrier or race.
+这不代表系统从结构上消除了所有 race。任何新增 MRV2 功能如果复用 pinned
+CPU buffer、调用 `.item()`、执行 unpinned blocking transfer，或者在上述
+lifetime 规则之外写入 shared surface，都可能重新引入 barrier 或 race。
 
-## Source map for Scheduler Trace
+## Scheduler Trace 源码地图
 
-| Question | Primary v0.26 source |
+| 问题 | v0.26 主要源码 |
 |---|---|
-| Scheduler decision/output | `vllm/v1/core/sched/scheduler.py`, `output.py` |
-| Async Engine Core submission | `vllm/v1/engine/core.py` |
+| Scheduler 决策与输出 | `vllm/v1/core/sched/scheduler.py`、`output.py` |
+| Engine Core 异步提交 | `vllm/v1/engine/core.py` |
 | Worker dispatch | `vllm/v1/worker/gpu_worker.py` |
 | Request add/update/execute | `vllm/v1/worker/gpu/model_runner.py` |
 | Persistent request state | `vllm/v1/worker/gpu/states.py` |
 | Staged writes/UVA pools | `vllm/v1/worker/gpu/buffer_utils.py` |
 | Persistent/gathered block tables | `vllm/v1/worker/gpu/block_table.py` |
-| Architectural intent | `docs/design/model_runner_v2.md` |
+| 架构设计目标 | `docs/design/model_runner_v2.md` |
 
-For the later trace patch, Scheduler state should be captured before this
-worker path. MRV2 row/index information belongs to an optional worker-side
-extension; it must not force GPU synchronization just to enrich a log line.
+后续 trace patch 应当在进入这条 worker 路径前捕获 Scheduler state。MRV2
+row/index 信息属于可选的 worker-side 扩展，不能为了丰富一行日志而强制
+GPU synchronization。
 
-## Performance-comparison warning
+## 性能对比警告
 
-The historical v0.15 GPU result used a different runner and a different
-measured attention backend from the v0.26 path:
+历史 v0.15 GPU 结果与 v0.26 路径不仅使用了不同 runner，实测 attention
+backend 也不同：
 
 ```text
-v0.15 historical lane: V1 runner + FLASHINFER
-v0.26 measured lane:    MRV2 + TRITON_ATTN
+v0.15 历史分支：V1 runner + FLASHINFER
+v0.26 实测分支：MRV2 + TRITON_ATTN
 ```
 
-Therefore, a v0.15/v0.26 latency difference cannot be attributed to MRV2
-alone. A causal runner comparison would need a controlled v0.26 MRV1/MRV2
-experiment with the same model, backend, workload, memory settings, and
-machine state.
+因此，不能把 v0.15/v0.26 的延迟差异单独归因于 MRV2。要得到具有因果意义
+的 runner 对比，需要在 v0.26 内控制 MRV1/MRV2 实验，并保持模型、backend、
+workload、内存配置和机器状态一致。
 
-## Five-minute explanation
+## 5 分钟口述
 
-The outer vLLM loop is still Scheduler schedule, non-blocking model execution,
-then Scheduler update from output. The important MRV2 change is how the model
-runner stores and prepares request state.
+vLLM 的外层循环仍然是 Scheduler 调度、non-blocking 模型执行，再使用输出
+更新 Scheduler。MRV2 的关键变化在于 model runner 如何存储和准备 request
+state。
 
-V1 has two coupled layers: a Python `CachedRequestState` backup and an
-`InputBatch` whose rows are also direct model inputs. When requests disappear
-from a step, V1 removes rows, later re-adds them, condenses holes, and refreshes
-metadata. This becomes complicated under asynchronous scheduling because row
-movement and CPU/GPU buffer lifetimes must be protected.
+V1 包含两个耦合层：Python `CachedRequestState` 备份，以及 rows 同时作为
+直接模型输入的 `InputBatch`。当 request 暂时不出现在某一步时，V1 会移除
+rows，之后再重新加入、压紧空洞并刷新 metadata。异步调度下，这种设计需要
+额外保护 row 移动和 CPU/GPU buffer 生命周期。
 
-MRV2 assigns each active request a fixed row. Token history, lengths and
-computed-token progress live in persistent GPU or UVA-backed state. The
-request can appear in any execution order because each step builds
-`idx_mapping`, which maps compact batch order back to persistent rows. GPU
-kernels then prepare input IDs, positions, sequence lengths and gathered block
-tables from that mapping.
+MRV2 为每个 active request 分配固定 row。Token history、lengths 和
+computed-token progress 保存在 persistent GPU 或 UVA-backed state 中。
+Request 可以按任意顺序执行，因为每一步都会创建 `idx_mapping`，把紧凑
+batch 顺序映射回 persistent rows。GPU kernels 再根据该映射准备 input IDs、
+positions、sequence lengths 和 gather 后的 block tables。
 
-Incremental changes use `StagedWriteTensor`: CPU code records only changed
-rows, then a GPU kernel applies the diffs. UVA supplies small write metadata
-and can hold very large token-history state. To remain async-safe, pinned/UVA
-buffers are pooled with at least the in-flight batch depth, so CPU preparation
-for step N+1 does not overwrite the buffer GPU step N is reading.
+增量变化通过 `StagedWriteTensor` 处理：CPU 只记录发生变化的 rows，GPU
+kernel 再应用这些 diffs。UVA 既用于提供少量 write metadata，也可以承载
+很大的 token-history state。为了保持 async-safe，pinned/UVA buffers 的
+pool 深度至少覆盖 in-flight batch 数，因此 CPU 准备 step N+1 时不会覆盖
+GPU step N 正在读取的 buffer。
 
-For Scheduler Trace, I will log Scheduler decisions on the CPU without
-`.item()` or synchronization. Persistent-row and index-mapping evidence will
-be an optional MRV2-side extension, not mixed into claims about Scheduler
-policy.
+实现 Scheduler Trace 时，我会在 CPU 侧记录 Scheduler decisions，不调用
+`.item()`，也不引入同步。Persistent row 和 index mapping 证据将作为可选
+的 MRV2-side 扩展，不会与 Scheduler policy 的结论混为一谈。
 
-## Unresolved questions for later days
+## 留给后续阶段的问题
 
-- Which row/index fields can be exposed for tracing without adding a worker RPC
-  or synchronization?
-- How does the measured `TRITON_ATTN` backend's ordering constraint affect
-  `sort_batch_req_ids()` for mixed prefill/decode batches?
-- Under the 6 GiB GPU limit, will the 8K/16K workload run directly, or should
-  GPU evidence use a 2K/4K scale while Scheduler tests preserve 8K/16K logic?
-- Does long-running WSL pinned-memory use remain stable beyond the Day 1 smoke
-  duration?
+- 哪些 row/index 字段可以在不增加 worker RPC 或 synchronization 的情况下
+  暴露给 tracing？
+- 实测 `TRITON_ATTN` backend 的顺序约束，会怎样影响 mixed
+  prefill/decode batch 的 `sort_batch_req_ids()`？
+- 在 6 GiB GPU 限制下，8K/16K workload 能否直接运行？如果不能，是否应
+  使用 2K/4K 比例完成 GPU 实测，同时通过 Scheduler tests 保留 8K/16K
+  逻辑验证？
+- 长时间启用 WSL pinned memory 时，其稳定性是否能超过 Day 1 smoke test
+  的持续时间？
