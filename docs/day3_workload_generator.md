@@ -77,16 +77,19 @@ Run：`day3-s1-2k-smoke-20260727`
 
 ### S3 canonical
 
-Run：`day3-s3-canonical-20260727`
+最终可追溯 Run：`day3-s3-postcommit-20260728`
 
 | Request | Submitted | Prompt | Output | TTFT | E2E |
 |---|---:|---:|---:|---:|---:|
-| A | 0.000225s | 8192 | 32 | 5.693s | 28.076s |
-| B | 0.000408s | 16384 | 32 | 27.430s | 28.179s |
+| A | 0.000377s | 8192 | 32 | 5.587s | 27.569s |
+| B | 0.000650s | 16384 | 32 | 26.919s | 27.663s |
 
 两个请求均在 `t≈0` 提交，canonical 8K/16K workload 可在 RTX 2060
 上执行。本次是冷启动后的首个 workload，日志出现 Triton kernel JIT，
 因此这些延迟只用于功能验收，不作为稳定 benchmark。
+
+该 run 在 workload 提交 `7d53f6af2f` 上执行，metadata 中工作区状态为空，
+记录的 generator SHA-256 与该提交中的脚本一致。
 
 仅凭 request timing 不能断言 A/B 每个 Scheduler step 分到了多少 token，
 也不能断言 B 等待的具体内部原因。
