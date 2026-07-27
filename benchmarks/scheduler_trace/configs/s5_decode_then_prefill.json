@@ -1,0 +1,35 @@
+{
+  "scenario_id": "S5",
+  "description": "B=16K arrives while A is expected to be in a long decode.",
+  "concurrency": 2,
+  "seed": 3,
+  "engine": {
+    "dtype": "half",
+    "max_model_len": 32768,
+    "max_num_batched_tokens": 4096,
+    "max_num_seqs": 2,
+    "gpu_memory_utilization": 0.70,
+    "enforce_eager": true,
+    "enable_chunked_prefill": true,
+    "enable_prefix_caching": false,
+    "stream_interval": 1,
+    "disable_log_stats": true,
+    "enable_log_requests": false,
+    "trust_remote_code": false,
+    "seed": 3
+  },
+  "requests": [
+    {
+      "request_id": "A",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 0.0
+    },
+    {
+      "request_id": "B",
+      "prompt_tokens": 16384,
+      "output_tokens": 32,
+      "arrival_s": 0.25
+    }
+  ]
+}

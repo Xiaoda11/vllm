@@ -1,0 +1,71 @@
+# Scheduler Trace Workloads
+
+This directory contains deterministic inputs for the v0.26 Scheduler Trace
+Lab. The generator submits pre-tokenized prompts through `AsyncLLM`, so prompt
+lengths are exact and request arrival times are controlled independently.
+
+## Validate without a GPU
+
+```bash
+V026_PYTHON=/home/xiaoda/vllm-lab/.venv-v026/bin/python
+MODEL=/home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct
+
+"${V026_PYTHON}" scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/s3_dual_simultaneous.json \
+  --model "${MODEL}" \
+  --validate-only
+```
+
+## Run the canonical S3 workload
+
+The WSL pin-memory opt-in is required for the measured MRV2 Path A.
+
+```bash
+export VLLM_WSL2_ENABLE_PIN_MEMORY=1
+export VLLM_USE_V2_MODEL_RUNNER=1
+
+/home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/s3_dual_simultaneous.json \
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct
+```
+
+Each run creates a unique directory under
+`/home/xiaoda/vllm-lab/outputs/`. It contains:
+
+- `run_metadata.json`: commit, exact command, environment, resolved scenario,
+  prompt digests, and request results.
+- `request_timing.csv`: planned/submitted/first-token/finished times, TTFT,
+  E2E latency, exact token counts, and errors.
+
+Existing run directories are never overwritten.
+
+## Scale prompts for the RTX 2060
+
+If canonical 8K/16K requests do not fit reliably, preserve the 1:2 ratio with:
+
+```bash
+/home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/s3_dual_simultaneous.json \
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct \
+  --prompt-scale 0.5
+```
+
+This changes S3 to 4K/8K. The metadata and CSV retain both canonical and
+effective prompt lengths. A scaled GPU run must not be reported as an 8K/16K
+measurement.
+
+## Scenario intent
+
+| Scenario | Requests | Controlled question |
+|---|---|---|
+| S1 | A=8K | Single long prefill baseline |
+| S2 | B=16K | Longer single prefill baseline |
+| S3 | A=8K, B=16K at `t=0` | Dual-prefill scheduling |
+| S4 | A=8K, then B=16K | Waiting/running transition |
+| S5 | A decodes, then B=16K | Decode/prefill overlap |
+| S6 | Two 8K prompts share 6K | Prefix-cache reuse |
+
+Request-level timing cannot establish scheduler step order, token-budget
+allocation, KV-block allocation, or preemption. Those are Day 4 trace fields.
