@@ -49,6 +49,7 @@ from vllm.utils.math_utils import cdiv
 from vllm.utils.mem_utils import DeviceMemoryProfiler, format_gib
 from vllm.utils.torch_utils import PIN_MEMORY, STR_DTYPE_TO_TORCH_DTYPE
 from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput
+from vllm.v1.core.sched.trace import create_model_runner_trace_writer
 from vllm.v1.kv_cache_interface import KVCacheConfig, MambaSpec
 from vllm.v1.outputs import DraftTokenIds, ModelRunnerOutput
 from vllm.v1.worker.cp_utils import check_attention_cp_compatibility
@@ -130,6 +131,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.scheduler_config = vllm_config.scheduler_config
         self.speculative_config = vllm_config.speculative_config
         self.observability_config = vllm_config.observability_config
+        self.model_runner_trace_writer = create_model_runner_trace_writer()
 
         self.device = device
         self.dtype = self.model_config.dtype
@@ -894,6 +896,22 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         idx_mapping_iter = map(self.req_states.req_id_to_index.get, req_ids)
         idx_mapping_np = np.fromiter(idx_mapping_iter, dtype=np.int32, count=num_reqs)
+        if self.model_runner_trace_writer is not None:
+            self.model_runner_trace_writer.record(
+                {
+                    "schema_version": 1,
+                    "event": "model_runner_batch",
+                    "timestamp_ns": time.time_ns(),
+                    "step_id": scheduler_output.scheduler_step_id,
+                    "request_ids": req_ids,
+                    "persistent_rows": idx_mapping_np.tolist(),
+                    "num_scheduled_tokens": num_scheduled_tokens.tolist(),
+                    "request_id_to_persistent_row": {
+                        request_id: int(row)
+                        for request_id, row in zip(req_ids, idx_mapping_np)
+                    },
+                }
+            )
         idx_mapping = async_copy_to_gpu(idx_mapping_np, device=self.device)
 
         # Get the number of draft tokens for each request.
@@ -1589,6 +1607,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
     def shutdown(self) -> None:
         """Release GPU tensors (model weights, KV caches, workspace) so that
         memory is reclaimable when running in the same process."""
+        if self.model_runner_trace_writer is not None:
+            self.model_runner_trace_writer.close()
         torch.accelerator.synchronize()
         if hasattr(self, "kv_caches"):
             self.kv_caches.clear()

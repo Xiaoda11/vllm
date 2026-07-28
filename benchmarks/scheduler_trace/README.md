@@ -27,7 +27,8 @@ export VLLM_USE_V2_MODEL_RUNNER=1
 /home/xiaoda/vllm-lab/.venv-v026/bin/python \
   scripts/lab_v026_workload.py \
   --config benchmarks/scheduler_trace/configs/s3_dual_simultaneous.json \
-  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct \
+  --scheduler-trace
 ```
 
 Each run creates a unique directory under
@@ -37,8 +38,26 @@ Each run creates a unique directory under
   prompt digests, and request results.
 - `request_timing.csv`: planned/submitted/first-token/finished times, TTFT,
   E2E latency, exact token counts, and errors.
+- `scheduler_trace.jsonl`: opt-in, one CPU-side Scheduler decision per line.
+- `scheduler_trace.mrv2.jsonl`: opt-in, MRV2 execution order and persistent
+  request rows. Warmup records use `step_id=0`.
 
 Existing run directories are never overwritten.
+
+Flatten and join both trace streams with:
+
+```bash
+/home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_scheduler_trace_to_csv.py \
+  --scheduler-trace /home/xiaoda/vllm-lab/outputs/RUN_ID/scheduler_trace.jsonl \
+  --model-runner-trace \
+    /home/xiaoda/vllm-lab/outputs/RUN_ID/scheduler_trace.mrv2.jsonl \
+  --output /home/xiaoda/vllm-lab/outputs/RUN_ID/scheduler_trace.csv
+```
+
+Tracing is disabled unless `--scheduler-trace` is passed. The implementation
+copies Scheduler and MRV2 CPU state only; it does not read a GPU tensor or add
+a CUDA synchronization.
 
 ## Scale prompts for the RTX 2060
 

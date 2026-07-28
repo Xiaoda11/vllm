@@ -142,6 +142,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate config and token construction without starting vLLM.",
     )
+    parser.add_argument(
+        "--scheduler-trace",
+        action="store_true",
+        help="Write Scheduler and MRV2 JSONL traces in the run directory.",
+    )
     return parser.parse_args()
 
 
@@ -600,6 +605,7 @@ def build_metadata(
         "environment": {
             "VLLM_USE_V2_MODEL_RUNNER": os.getenv("VLLM_USE_V2_MODEL_RUNNER"),
             "VLLM_WSL2_ENABLE_PIN_MEMORY": os.getenv("VLLM_WSL2_ENABLE_PIN_MEMORY"),
+            "LAB_V026_SCHEDULER_TRACE_PATH": os.getenv("LAB_V026_SCHEDULER_TRACE_PATH"),
         },
         "original_scenario": _scenario_dict(original),
         "effective_scenario": _scenario_dict(scaled),
@@ -663,6 +669,10 @@ def main() -> None:
         f"{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     )
     run_directory = create_run_directory(args.output_root, run_id)
+    if args.scheduler_trace:
+        os.environ["LAB_V026_SCHEDULER_TRACE_PATH"] = str(
+            (run_directory / "scheduler_trace.jsonl").resolve()
+        )
     metadata_path = run_directory / "run_metadata.json"
     metadata = build_metadata(
         run_id=run_id,
@@ -694,6 +704,13 @@ def main() -> None:
             else "request_failed"
         )
         metadata["request_results"] = [asdict(timing) for timing in timings]
+        if args.scheduler_trace:
+            metadata["trace_artifacts"] = {
+                "scheduler": str((run_directory / "scheduler_trace.jsonl").resolve()),
+                "model_runner": str(
+                    (run_directory / "scheduler_trace.mrv2.jsonl").resolve()
+                ),
+            }
     except Exception as exc:
         metadata["status"] = "engine_failed"
         metadata["error"] = f"{type(exc).__name__}: {exc}"

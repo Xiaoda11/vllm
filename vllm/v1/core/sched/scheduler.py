@@ -52,6 +52,7 @@ from vllm.v1.core.sched.request_queue import (
     SchedulingPolicy,
     create_request_queue,
 )
+from vllm.v1.core.sched.trace import create_scheduler_trace_writer
 from vllm.v1.core.sched.utils import check_stop, remove_all
 from vllm.v1.engine import EngineCoreEventType, EngineCoreOutput, EngineCoreOutputs
 from vllm.v1.kv_cache_interface import KVCacheConfig
@@ -291,6 +292,7 @@ class Scheduler(SchedulerInterface):
         # Scheduler iteration counter. Drives the V2+PP+async decode-throttle
         # cadence (`next_decode_eligible_step`).
         self.current_step = 0
+        self.scheduler_trace_writer = create_scheduler_trace_writer()
         # DP prefill balancing: Flag to track whether the last cadence-aligned
         # prefill batch fully drained the waiting queue. Prefill throttling
         # is disabled in this case.
@@ -424,6 +426,12 @@ class Scheduler(SchedulerInterface):
 
     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         self.current_step += 1
+        trace_before = (
+            self._make_scheduler_trace_snapshot()
+            if self.scheduler_trace_writer is not None
+            else None
+        )
+        trace_prefix_cached_tokens: dict[str, int] = {}
         # NOTE(woosuk) on the scheduling algorithm:
         # There's no "decoding phase" nor "prefill phase" in the scheduler.
         # Each request just has the num_computed_tokens and
@@ -446,6 +454,7 @@ class Scheduler(SchedulerInterface):
         if self._pause_state == PauseState.PAUSED_ALL:
             # Do not schedule any requests when paused.
             token_budget = 0
+        trace_token_budget = token_budget
 
         # Encoder-related.
         scheduled_encoder_inputs: dict[str, list[int]] = {}
@@ -788,6 +797,10 @@ class Scheduler(SchedulerInterface):
                     num_computed_tokens = (
                         num_new_local_computed_tokens + num_external_computed_tokens
                     )
+                    if self.scheduler_trace_writer is not None:
+                        trace_prefix_cached_tokens[request_id] = (
+                            num_new_local_computed_tokens
+                        )
                     assert num_computed_tokens <= request.num_tokens
 
                     # Skip request with pending mm encoding prefetches
@@ -1164,6 +1177,7 @@ class Scheduler(SchedulerInterface):
             new_block_ids_to_zero=self._get_new_block_ids_to_zero(),
             kv_cache_block_copies=pending_kv_cache_block_copies,
             num_spec_tokens_to_schedule=num_spec_tokens_to_schedule,
+            scheduler_step_id=self.current_step,
         )
 
         # NOTE(Kuntai): this function is designed for multiple purposes:
@@ -1188,7 +1202,142 @@ class Scheduler(SchedulerInterface):
 
         with record_function_or_nullcontext("schedule: update_after_schedule"):
             self._update_after_schedule(scheduler_output)
+        if self.scheduler_trace_writer is not None:
+            assert trace_before is not None
+            self.scheduler_trace_writer.record(
+                self._make_scheduler_trace_event(
+                    trace_before,
+                    scheduler_output,
+                    trace_token_budget,
+                    trace_prefix_cached_tokens,
+                )
+            )
         return scheduler_output
+
+    def _make_scheduler_trace_snapshot(self) -> dict[str, Any]:
+        request_states = {
+            request_id: self._make_scheduler_trace_request_state(request)
+            for request_id, request in self.requests.items()
+        }
+        return {
+            "running": [request.request_id for request in self.running],
+            "waiting": [request.request_id for request in self.waiting],
+            "skipped_waiting": [request.request_id for request in self.skipped_waiting],
+            "requests": request_states,
+            "kv_cache_usage": self.kv_cache_manager.usage,
+            "num_free_blocks": (self.kv_cache_manager.block_pool.get_num_free_blocks()),
+        }
+
+    def _make_scheduler_trace_request_state(self, request: Request) -> dict[str, Any]:
+        try:
+            block_ids = self.kv_cache_manager.get_block_ids(request.request_id)
+        except KeyError:
+            block_ids = tuple()
+        return {
+            "status": request.status.name,
+            "num_prompt_tokens": request.num_prompt_tokens,
+            "num_output_tokens": len(request.output_token_ids),
+            "num_computed_tokens": request.num_computed_tokens,
+            "num_in_flight_tokens": request.num_in_flight_tokens,
+            "num_processed_tokens": max(
+                0, request.num_computed_tokens - request.num_in_flight_tokens
+            ),
+            "is_prefill_chunk": request.is_prefill_chunk,
+            "block_ids": [list(group) for group in block_ids],
+        }
+
+    def _make_scheduler_trace_event(
+        self,
+        before: dict[str, Any],
+        scheduler_output: SchedulerOutput,
+        token_budget: int,
+        prefix_cached_tokens: dict[str, int],
+    ) -> dict[str, Any]:
+        after = self._make_scheduler_trace_snapshot()
+        scheduled_ids = list(scheduler_output.num_scheduled_tokens)
+        request_ids = list(
+            dict.fromkeys(
+                [
+                    *before["running"],
+                    *before["waiting"],
+                    *before["skipped_waiting"],
+                    *scheduled_ids,
+                    *after["running"],
+                    *after["waiting"],
+                    *after["skipped_waiting"],
+                    *sorted(scheduler_output.finished_req_ids),
+                ]
+            )
+        )
+        request_events = []
+        for request_id in request_ids:
+            before_state = before["requests"].get(request_id)
+            after_state = after["requests"].get(request_id)
+            before_blocks = before_state["block_ids"] if before_state else []
+            after_blocks = after_state["block_ids"] if after_state else []
+            request_events.append(
+                {
+                    "request_id": request_id,
+                    "before": before_state,
+                    "after": after_state,
+                    "num_scheduled_tokens": (
+                        scheduler_output.num_scheduled_tokens.get(request_id, 0)
+                    ),
+                    "prefix_cached_tokens": prefix_cached_tokens.get(request_id, 0),
+                    "allocated_block_ids": self._block_id_difference(
+                        after_blocks, before_blocks
+                    ),
+                    "freed_block_ids": self._block_id_difference(
+                        before_blocks, after_blocks
+                    ),
+                }
+            )
+
+        return {
+            "schema_version": 1,
+            "event": "scheduler_step",
+            "timestamp_ns": time.time_ns(),
+            "step_id": self.current_step,
+            "token_budget": {
+                "initial": token_budget,
+                "scheduled": scheduler_output.total_num_scheduled_tokens,
+                "remaining": (
+                    token_budget - scheduler_output.total_num_scheduled_tokens
+                ),
+            },
+            "queues": {
+                "running_before": before["running"],
+                "waiting_before": before["waiting"],
+                "skipped_waiting_before": before["skipped_waiting"],
+                "running_after": after["running"],
+                "waiting_after": after["waiting"],
+                "skipped_waiting_after": after["skipped_waiting"],
+            },
+            "kv_cache": {
+                "usage_before": before["kv_cache_usage"],
+                "usage_after": after["kv_cache_usage"],
+                "num_free_blocks_before": before["num_free_blocks"],
+                "num_free_blocks_after": after["num_free_blocks"],
+            },
+            "requests": request_events,
+            "scheduled_request_ids": scheduled_ids,
+            "preempted_request_ids": sorted(scheduler_output.preempted_req_ids or ()),
+            "finished_request_ids": sorted(scheduler_output.finished_req_ids),
+        }
+
+    @staticmethod
+    def _block_id_difference(
+        left: list[list[int]], right: list[list[int]]
+    ) -> list[list[int]]:
+        num_groups = max(len(left), len(right))
+        differences = []
+        for group_index in range(num_groups):
+            left_group = left[group_index] if group_index < len(left) else []
+            right_group = set(right[group_index]) if group_index < len(right) else set()
+            differences.append(
+                [block_id for block_id in left_group if block_id not in right_group]
+            )
+        return differences
 
     def _build_kv_connector_meta(
         self, connector: KVConnectorBase_V1, scheduler_output: SchedulerOutput
@@ -2462,6 +2611,8 @@ class Scheduler(SchedulerInterface):
 
     def shutdown(self) -> None:
         logger.debug_once("[shutdown] Scheduler: start")
+        if self.scheduler_trace_writer is not None:
+            self.scheduler_trace_writer.close()
         if self.kv_event_publisher:
             self.kv_event_publisher.shutdown()
         if self.connector is not None:

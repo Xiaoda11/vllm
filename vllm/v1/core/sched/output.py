@@ -259,6 +259,9 @@ class SchedulerOutput:
     # Number of spec tokens to schedule for the next step.
     num_spec_tokens_to_schedule: int = 0
 
+    # Scheduler step that produced this output. Used by opt-in lab tracing.
+    scheduler_step_id: int = 0
+
     @classmethod
     def make_empty(cls) -> "SchedulerOutput":
         return cls(
