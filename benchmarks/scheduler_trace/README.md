@@ -75,6 +75,9 @@ Pass `--token-budget 2048`, `--token-budget 4096`, or
 recorded under `effective_scenario.engine.max_num_batched_tokens` in
 `run_metadata.json`; the source config remains unchanged.
 
+The measured matrix and its source/measurement boundaries are documented in
+`docs/day5_dual_prefill.md`.
+
 ## Scale prompts for the RTX 2060
 
 If canonical 8K/16K requests do not fit reliably, preserve the 1:2 ratio with:
