@@ -69,7 +69,7 @@ MRV2 行连接。
 
 ## GPU 实测
 
-最终 schema 集成 Run：`day4-s3-trace-v1-20260728`
+最终可追溯 Run：`day4-s3-postcommit-20260729`
 
 - vLLM v0.26.0；
 - MRV2：`VLLM_USE_V2_MODEL_RUNNER=1`；
@@ -81,24 +81,27 @@ MRV2 行连接。
 - MRV2 文件另有 2 条 `step_id=0` warmup records；
 - 无 preemption。
 
+该 run 在 Scheduler Trace 提交 `f0bb828de2` 上执行，metadata 中工作区状态
+为空，记录的 generator SHA-256 与该提交中的脚本一致。
+
 前 7 步的关键字段如下。`processed before` 由
 `computed before - in-flight before` 得到。
 
 | Step | Req | Processed before | In-flight before | Scheduled | MRV2 row | MRV2 order |
 |---:|---|---:|---:|---:|---:|---|
-| 1 | A | 0 | 0 | 4096 | 0 | A |
-| 2 | A | 0 | 4096 | 4096 | 0 | A |
+| 1 | A | 0 | 0 | 4096 | 1 | A |
+| 2 | A | 0 | 4096 | 4096 | 1 | A |
 | 2 | B | 0 | 0 | 0 | — | A |
-| 3 | A | 4096 | 4096 | 1 | 0 | A, B |
-| 3 | B | 0 | 0 | 4095 | 1 | A, B |
-| 4 | A | 8192 | 1 | 1 | 0 | A, B |
-| 4 | B | 0 | 4095 | 4095 | 1 | A, B |
-| 5 | A | 8193 | 1 | 1 | 0 | A, B |
-| 5 | B | 4095 | 4095 | 4095 | 1 | A, B |
-| 6 | A | 8194 | 1 | 1 | 0 | A, B |
-| 6 | B | 8190 | 4095 | 4095 | 1 | A, B |
-| 7 | A | 8195 | 1 | 1 | 0 | A, B |
-| 7 | B | 12285 | 4095 | 4 | 1 | A, B |
+| 3 | A | 4096 | 4096 | 1 | 1 | A, B |
+| 3 | B | 0 | 0 | 4095 | 0 | A, B |
+| 4 | A | 8192 | 1 | 1 | 1 | A, B |
+| 4 | B | 0 | 4095 | 4095 | 0 | A, B |
+| 5 | A | 8193 | 1 | 1 | 1 | A, B |
+| 5 | B | 4095 | 4095 | 4095 | 0 | A, B |
+| 6 | A | 8194 | 1 | 1 | 1 | A, B |
+| 6 | B | 8190 | 4095 | 4095 | 0 | A, B |
+| 7 | A | 8195 | 1 | 1 | 1 | A, B |
+| 7 | B | 12285 | 4095 | 4 | 0 | A, B |
 
 ## 结果解释
 
@@ -110,12 +113,17 @@ Step 3 是关键证据：
 - A 在 Scheduler 侧只消费了前 4096 tokens 的执行结果，另有 4096
   tokens in-flight；
 - 本步仍给 A 1 token，同时给 B 4095 tokens；
-- MRV2 的实际 batch 顺序是 `[A, B]`，persistent rows 稳定为 A=0、B=1。
+- MRV2 的实际 batch 顺序是 `[A, B]`，本次 run 内 persistent rows 稳定为
+  A=1、B=0。
 
 所以正确结论不是“客户端提交了 B，因此 vLLM 已经调度 B”，也不是“必须等
 A 完全结束才准备 B”。证据表明：A 尚有一块 4096-token 工作处于 in-flight
 状态时，Scheduler 已让 B 进入同一个 mixed batch，MRV2 也已为 B 使用
-persistent row 1 准备执行。
+persistent row 0 准备执行。
+
+提交前的开发 run 曾分配 A=0、B=1，说明具体 row 数字取决于当次空闲槽
+状态，不应跨 run 比较；可验证的性质是同一请求在本次生命周期内 row 稳定，
+并由每 step 的 `idx_mapping` 正确引用。
 
 这仍不能证明 step 3 发生瞬间某个 CUDA kernel 的物理完成百分比；若需要
 kernel 时间线，后续应使用 CUDA event 或 Nsight，而不是把 Scheduler
