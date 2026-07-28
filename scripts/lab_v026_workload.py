@@ -138,6 +138,13 @@ def parse_args() -> argparse.Namespace:
         help="Scale prompt and shared-prefix lengths; output lengths are unchanged.",
     )
     parser.add_argument(
+        "--token-budget",
+        type=int,
+        help=(
+            "Override engine.max_num_batched_tokens for controlled budget experiments."
+        ),
+    )
+    parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Validate config and token construction without starting vLLM.",
@@ -349,6 +356,21 @@ def scale_scenario(scenario: Scenario, prompt_scale: float) -> Scenario:
         seed=scenario.seed,
         engine=scenario.engine,
         requests=tuple(requests),
+    )
+
+
+def override_token_budget(scenario: Scenario, token_budget: int | None) -> Scenario:
+    if token_budget is None:
+        return scenario
+    token_budget = _require_int(token_budget, "token_budget", minimum=1)
+    engine = {**scenario.engine, "max_num_batched_tokens": token_budget}
+    return Scenario(
+        scenario_id=scenario.scenario_id,
+        description=scenario.description,
+        concurrency=scenario.concurrency,
+        seed=scenario.seed,
+        engine=engine,
+        requests=scenario.requests,
     )
 
 
@@ -630,6 +652,7 @@ def print_validation(
         "status": "valid",
         "scenario_id": scenario.scenario_id,
         "concurrency": scenario.concurrency,
+        "max_num_batched_tokens": scenario.engine.get("max_num_batched_tokens"),
         "requests": [
             {
                 "request_id": item.spec.request_id,
@@ -651,6 +674,7 @@ def main() -> None:
     args = parse_args()
     original = load_scenario(args.config)
     scenario = scale_scenario(original, args.prompt_scale)
+    scenario = override_token_budget(scenario, args.token_budget)
 
     from transformers import AutoTokenizer
 

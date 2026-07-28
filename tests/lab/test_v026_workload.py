@@ -5,6 +5,7 @@ import pytest
 
 from scripts.lab_v026_workload import (
     load_scenario,
+    override_token_budget,
     prepare_requests,
     scale_scenario,
 )
@@ -34,6 +35,23 @@ def test_prompt_scale_preserves_s3_one_to_two_ratio() -> None:
     scaled = scale_scenario(scenario, 0.5)
 
     assert [request.prompt_tokens for request in scaled.requests] == [4096, 8192]
+
+
+def test_token_budget_override_preserves_requests() -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "s3_dual_simultaneous.json")
+
+    overridden = override_token_budget(scenario, 2048)
+
+    assert overridden.engine["max_num_batched_tokens"] == 2048
+    assert overridden.requests == scenario.requests
+    assert scenario.engine["max_num_batched_tokens"] == 4096
+
+
+def test_token_budget_override_rejects_non_positive_value() -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "s3_dual_simultaneous.json")
+
+    with pytest.raises(ValueError, match="token_budget"):
+        override_token_budget(scenario, 0)
 
 
 def test_prepared_prompts_have_exact_lengths_and_shared_prefix() -> None:

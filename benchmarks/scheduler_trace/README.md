@@ -59,6 +59,22 @@ Tracing is disabled unless `--scheduler-trace` is passed. The implementation
 copies Scheduler and MRV2 CPU state only; it does not read a GPU tensor or add
 a CUDA synchronization.
 
+## Run the Day 5 dual-prefill matrix
+
+Day 5 crosses three global per-step token budgets (`2048`, `4096`, and `8192`)
+with three arrival orders:
+
+| Arrival order | Config |
+|---|---|
+| A and B simultaneous | `s3_dual_simultaneous.json` |
+| A before B | `s4_staggered_prefill.json` |
+| B before A | `d5_dual_b_first.json` |
+
+Pass `--token-budget 2048`, `--token-budget 4096`, or
+`--token-budget 8192` together with `--scheduler-trace`. The resolved budget is
+recorded under `effective_scenario.engine.max_num_batched_tokens` in
+`run_metadata.json`; the source config remains unchanged.
+
 ## Scale prompts for the RTX 2060
 
 If canonical 8K/16K requests do not fit reliably, preserve the 1:2 ratio with:
