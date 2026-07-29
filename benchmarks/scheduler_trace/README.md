@@ -78,6 +78,40 @@ recorded under `effective_scenario.engine.max_num_batched_tokens` in
 The measured matrix and its source/measurement boundaries are documented in
 `docs/day5_dual_prefill.md`.
 
+## Run the Day 6 KV allocation workloads
+
+Use S1 with `--token-budget 2048` for the single-request block-table growth
+baseline, and S3 for two requests without a shared prefix.
+
+Run the same S6 token inputs with Prefix Cache disabled and enabled:
+
+```bash
+/home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/s6_shared_prefix.json \
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct \
+  --token-budget 2048 \
+  --prefix-caching off \
+  --scheduler-trace
+
+/home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/s6_shared_prefix.json \
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct \
+  --token-budget 2048 \
+  --prefix-caching on \
+  --scheduler-trace
+```
+
+The flattened CSV includes the KV block size, Prefix Cache hit blocks, and
+block-table sizes before and after each step. `block_table_blocks_added`
+counts blocks newly attached to that request's table. With Prefix Cache
+enabled, it includes reused blocks and must not be reported as the number of
+new physical allocations.
+
+The measured allocation chain and Prefix Cache comparison are documented in
+`docs/day6_kv_cache_allocation.md`.
+
 ## Scale prompts for the RTX 2060
 
 If canonical 8K/16K requests do not fit reliably, preserve the 1:2 ratio with:
