@@ -149,6 +149,9 @@ With the v0.26 default `scheduler_reserve_full_isl=true`, the pressured B
 request remains waiting until its full input can fit. That admission guard is
 a separate behavior and must not be reported as a measured preemption.
 
+The measured failure, preemption, recomputation, and request-timing evidence is
+documented in `docs/day7_preemption.md`.
+
 ## Scale prompts for the RTX 2060
 
 If canonical 8K/16K requests do not fit reliably, preserve the 1:2 ratio with:
