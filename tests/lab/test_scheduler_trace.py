@@ -65,6 +65,7 @@ def test_converter_joins_scheduler_and_mrv2_rows() -> None:
         },
         "token_budget": {"initial": 4, "scheduled": 4, "remaining": 0},
         "kv_cache": {
+            "block_size": 4,
             "usage_before": 0.0,
             "usage_after": 0.1,
             "num_free_blocks_before": 10,
@@ -82,6 +83,7 @@ def test_converter_joins_scheduler_and_mrv2_rows() -> None:
                     "num_computed_tokens": 0,
                     "num_in_flight_tokens": 0,
                     "num_processed_tokens": 0,
+                    "block_ids": [],
                 },
                 "after": {
                     "status": "RUNNING",
@@ -90,6 +92,7 @@ def test_converter_joins_scheduler_and_mrv2_rows() -> None:
                     "num_computed_tokens": 4,
                     "num_in_flight_tokens": 4,
                     "num_processed_tokens": 0,
+                    "block_ids": [[9]],
                 },
                 "num_scheduled_tokens": 4,
                 "prefix_cached_tokens": 0,
@@ -111,3 +114,8 @@ def test_converter_joins_scheduler_and_mrv2_rows() -> None:
     assert rows[0]["processed_tokens_after_schedule"] == 0
     assert rows[0]["persistent_row"] == 15
     assert rows[0]["mrv2_execution_order"] == "A"
+    assert rows[0]["kv_block_size"] == 4
+    assert rows[0]["block_table_blocks_before"] == 0
+    assert rows[0]["block_table_blocks_after"] == 1
+    assert rows[0]["allocated_blocks"] == 1
+    assert rows[0]["freed_blocks"] == 0

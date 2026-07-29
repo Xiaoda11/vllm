@@ -145,6 +145,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--prefix-caching",
+        choices=("config", "on", "off"),
+        default="config",
+        help="Override engine.enable_prefix_caching for controlled comparisons.",
+    )
+    parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Validate config and token construction without starting vLLM.",
@@ -364,6 +370,22 @@ def override_token_budget(scenario: Scenario, token_budget: int | None) -> Scena
         return scenario
     token_budget = _require_int(token_budget, "token_budget", minimum=1)
     engine = {**scenario.engine, "max_num_batched_tokens": token_budget}
+    return Scenario(
+        scenario_id=scenario.scenario_id,
+        description=scenario.description,
+        concurrency=scenario.concurrency,
+        seed=scenario.seed,
+        engine=engine,
+        requests=scenario.requests,
+    )
+
+
+def override_prefix_caching(scenario: Scenario, mode: str) -> Scenario:
+    if mode == "config":
+        return scenario
+    if mode not in ("on", "off"):
+        raise ValueError("prefix_caching must be one of: config, on, off")
+    engine = {**scenario.engine, "enable_prefix_caching": mode == "on"}
     return Scenario(
         scenario_id=scenario.scenario_id,
         description=scenario.description,
@@ -675,6 +697,7 @@ def main() -> None:
     original = load_scenario(args.config)
     scenario = scale_scenario(original, args.prompt_scale)
     scenario = override_token_budget(scenario, args.token_budget)
+    scenario = override_prefix_caching(scenario, args.prefix_caching)
 
     from transformers import AutoTokenizer
 

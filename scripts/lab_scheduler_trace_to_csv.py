@@ -36,6 +36,11 @@ CSV_FIELDS = [
     "kv_usage_after",
     "num_free_blocks_before",
     "num_free_blocks_after",
+    "kv_block_size",
+    "block_table_blocks_before",
+    "block_table_blocks_after",
+    "allocated_blocks",
+    "freed_blocks",
     "allocated_block_ids",
     "freed_block_ids",
     "preempted",
@@ -92,6 +97,10 @@ def _state_value(
     return state.get(field, default) if state is not None else default
 
 
+def _block_count(groups: list[list[int]]) -> int:
+    return sum(len(group) for group in groups)
+
+
 def flatten_trace(
     scheduler_records: list[dict[str, Any]],
     runner_steps: dict[int, dict[str, Any]],
@@ -109,6 +118,10 @@ def flatten_trace(
             request_id = request["request_id"]
             before = request.get("before")
             after = request.get("after")
+            blocks_before = _state_value(request, "before", "block_ids", [])
+            blocks_after = _state_value(request, "after", "block_ids", [])
+            allocated_block_ids = request["allocated_block_ids"]
+            freed_block_ids = request["freed_block_ids"]
             rows.append(
                 {
                     "step_id": step_id,
@@ -158,12 +171,17 @@ def flatten_trace(
                         "num_free_blocks_before"
                     ],
                     "num_free_blocks_after": step["kv_cache"]["num_free_blocks_after"],
+                    "kv_block_size": step["kv_cache"].get("block_size", ""),
+                    "block_table_blocks_before": _block_count(blocks_before),
+                    "block_table_blocks_after": _block_count(blocks_after),
+                    "allocated_blocks": _block_count(allocated_block_ids),
+                    "freed_blocks": _block_count(freed_block_ids),
                     "allocated_block_ids": json.dumps(
-                        request["allocated_block_ids"],
+                        allocated_block_ids,
                         separators=(",", ":"),
                     ),
                     "freed_block_ids": json.dumps(
-                        request["freed_block_ids"],
+                        freed_block_ids,
                         separators=(",", ":"),
                     ),
                     "preempted": request_id in step["preempted_request_ids"],

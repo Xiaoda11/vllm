@@ -1314,6 +1314,7 @@ class Scheduler(SchedulerInterface):
                 "skipped_waiting_after": after["skipped_waiting"],
             },
             "kv_cache": {
+                "block_size": self.block_size,
                 "usage_before": before["kv_cache_usage"],
                 "usage_after": after["kv_cache_usage"],
                 "num_free_blocks_before": before["num_free_blocks"],

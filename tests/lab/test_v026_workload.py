@@ -5,6 +5,7 @@ import pytest
 
 from scripts.lab_v026_workload import (
     load_scenario,
+    override_prefix_caching,
     override_token_budget,
     prepare_requests,
     scale_scenario,
@@ -52,6 +53,19 @@ def test_token_budget_override_rejects_non_positive_value() -> None:
 
     with pytest.raises(ValueError, match="token_budget"):
         override_token_budget(scenario, 0)
+
+
+@pytest.mark.parametrize(("mode", "enabled"), [("on", True), ("off", False)])
+def test_prefix_caching_override_preserves_requests(
+    mode: str, enabled: bool
+) -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "s6_shared_prefix.json")
+
+    overridden = override_prefix_caching(scenario, mode)
+
+    assert overridden.engine["enable_prefix_caching"] is enabled
+    assert overridden.requests == scenario.requests
+    assert scenario.engine["enable_prefix_caching"] is True
 
 
 def test_prepared_prompts_have_exact_lengths_and_shared_prefix() -> None:
