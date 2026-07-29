@@ -115,7 +115,8 @@ def test_converter_joins_scheduler_and_mrv2_rows() -> None:
     assert rows[0]["persistent_row"] == 15
     assert rows[0]["mrv2_execution_order"] == "A"
     assert rows[0]["kv_block_size"] == 4
+    assert rows[0]["prefix_cached_blocks"] == 0
     assert rows[0]["block_table_blocks_before"] == 0
     assert rows[0]["block_table_blocks_after"] == 1
-    assert rows[0]["allocated_blocks"] == 1
-    assert rows[0]["freed_blocks"] == 0
+    assert rows[0]["block_table_blocks_added"] == 1
+    assert rows[0]["block_table_blocks_removed"] == 0

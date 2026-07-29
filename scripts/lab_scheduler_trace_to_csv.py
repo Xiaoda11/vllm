@@ -37,10 +37,11 @@ CSV_FIELDS = [
     "num_free_blocks_before",
     "num_free_blocks_after",
     "kv_block_size",
+    "prefix_cached_blocks",
     "block_table_blocks_before",
     "block_table_blocks_after",
-    "allocated_blocks",
-    "freed_blocks",
+    "block_table_blocks_added",
+    "block_table_blocks_removed",
     "allocated_block_ids",
     "freed_block_ids",
     "preempted",
@@ -122,6 +123,8 @@ def flatten_trace(
             blocks_after = _state_value(request, "after", "block_ids", [])
             allocated_block_ids = request["allocated_block_ids"]
             freed_block_ids = request["freed_block_ids"]
+            block_size = step["kv_cache"].get("block_size")
+            prefix_cached_tokens = request["prefix_cached_tokens"]
             rows.append(
                 {
                     "step_id": step_id,
@@ -161,7 +164,7 @@ def flatten_trace(
                         request, "after", "num_processed_tokens"
                     ),
                     "num_scheduled_tokens": request["num_scheduled_tokens"],
-                    "prefix_cached_tokens": request["prefix_cached_tokens"],
+                    "prefix_cached_tokens": prefix_cached_tokens,
                     "token_budget_initial": step["token_budget"]["initial"],
                     "token_budget_scheduled": step["token_budget"]["scheduled"],
                     "token_budget_remaining": step["token_budget"]["remaining"],
@@ -171,11 +174,14 @@ def flatten_trace(
                         "num_free_blocks_before"
                     ],
                     "num_free_blocks_after": step["kv_cache"]["num_free_blocks_after"],
-                    "kv_block_size": step["kv_cache"].get("block_size", ""),
+                    "kv_block_size": block_size or "",
+                    "prefix_cached_blocks": (
+                        prefix_cached_tokens // block_size if block_size else ""
+                    ),
                     "block_table_blocks_before": _block_count(blocks_before),
                     "block_table_blocks_after": _block_count(blocks_after),
-                    "allocated_blocks": _block_count(allocated_block_ids),
-                    "freed_blocks": _block_count(freed_block_ids),
+                    "block_table_blocks_added": _block_count(allocated_block_ids),
+                    "block_table_blocks_removed": _block_count(freed_block_ids),
                     "allocated_block_ids": json.dumps(
                         allocated_block_ids,
                         separators=(",", ":"),
