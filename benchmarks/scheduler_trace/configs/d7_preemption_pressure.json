@@ -1,0 +1,36 @@
+{
+  "scenario_id": "D7",
+  "description": "A short decode overlaps B long prefill for KV pressure control.",
+  "concurrency": 2,
+  "seed": 3,
+  "engine": {
+    "dtype": "half",
+    "max_model_len": 16416,
+    "max_num_batched_tokens": 2048,
+    "max_num_seqs": 2,
+    "gpu_memory_utilization": 0.70,
+    "enforce_eager": true,
+    "enable_chunked_prefill": true,
+    "enable_prefix_caching": false,
+    "scheduler_reserve_full_isl": false,
+    "stream_interval": 1,
+    "disable_log_stats": true,
+    "enable_log_requests": false,
+    "trust_remote_code": false,
+    "seed": 3
+  },
+  "requests": [
+    {
+      "request_id": "A",
+      "prompt_tokens": 8192,
+      "output_tokens": 16,
+      "arrival_s": 0.0
+    },
+    {
+      "request_id": "B",
+      "prompt_tokens": 16384,
+      "output_tokens": 32,
+      "arrival_s": 0.0
+    }
+  ]
+}

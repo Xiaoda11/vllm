@@ -44,6 +44,9 @@ CSV_FIELDS = [
     "block_table_blocks_removed",
     "allocated_block_ids",
     "freed_block_ids",
+    "allocation_failed",
+    "allocation_failure_phase",
+    "preempted_computed_tokens",
     "preempted",
     "finished",
     "mrv2_execution_order",
@@ -117,6 +120,16 @@ def flatten_trace(
         requests = step["requests"] or [{"request_id": ""}]
         for request in requests:
             request_id = request["request_id"]
+            failures = [
+                failure
+                for failure in step.get("allocation_failures", [])
+                if failure["request_id"] == request_id
+            ]
+            preempted_computed_tokens = sum(
+                failure.get("preempted_num_computed_tokens") or 0
+                for failure in step.get("allocation_failures", [])
+                if failure.get("preempted_request_id") == request_id
+            )
             before = request.get("before")
             after = request.get("after")
             blocks_before = _state_value(request, "before", "block_ids", [])
@@ -190,6 +203,11 @@ def flatten_trace(
                         freed_block_ids,
                         separators=(",", ":"),
                     ),
+                    "allocation_failed": bool(failures),
+                    "allocation_failure_phase": _join(
+                        [failure["phase"] for failure in failures]
+                    ),
+                    "preempted_computed_tokens": preempted_computed_tokens,
                     "preempted": request_id in step["preempted_request_ids"],
                     "finished": request_id in step["finished_request_ids"],
                     "mrv2_execution_order": _join(runner_order),

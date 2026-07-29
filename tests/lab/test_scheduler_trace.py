@@ -72,6 +72,17 @@ def test_converter_joins_scheduler_and_mrv2_rows() -> None:
             "num_free_blocks_after": 9,
         },
         "preempted_request_ids": [],
+        "allocation_failures": [
+            {
+                "phase": "running",
+                "request_id": "A",
+                "num_new_tokens": 4,
+                "num_computed_tokens": 4,
+                "num_free_blocks": 0,
+                "preempted_request_id": "A",
+                "preempted_num_computed_tokens": 4,
+            }
+        ],
         "finished_request_ids": [],
         "requests": [
             {
@@ -120,3 +131,6 @@ def test_converter_joins_scheduler_and_mrv2_rows() -> None:
     assert rows[0]["block_table_blocks_after"] == 1
     assert rows[0]["block_table_blocks_added"] == 1
     assert rows[0]["block_table_blocks_removed"] == 0
+    assert rows[0]["allocation_failed"]
+    assert rows[0]["allocation_failure_phase"] == "running"
+    assert rows[0]["preempted_computed_tokens"] == 4

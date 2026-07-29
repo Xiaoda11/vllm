@@ -32,6 +32,8 @@ ENGINE_KEYS = {
     "max_num_partial_prefills",
     "max_num_seqs",
     "max_num_scheduled_tokens",
+    "num_gpu_blocks_override",
+    "scheduler_reserve_full_isl",
     "seed",
     "stream_interval",
     "trust_remote_code",
@@ -49,6 +51,7 @@ CSV_FIELDS = [
     "first_token_s",
     "finished_s",
     "ttft_s",
+    "tpot_s",
     "e2e_s",
     "original_prompt_tokens",
     "actual_prompt_tokens",
@@ -104,6 +107,7 @@ class RequestTiming:
     first_token_s: float | None
     finished_s: float | None
     ttft_s: float | None
+    tpot_s: float | None
     e2e_s: float | None
     original_prompt_tokens: int
     actual_prompt_tokens: int
@@ -143,6 +147,11 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Override engine.max_num_batched_tokens for controlled budget experiments."
         ),
+    )
+    parser.add_argument(
+        "--num-gpu-blocks-override",
+        type=int,
+        help="Override the KV cache block count for controlled pressure experiments.",
     )
     parser.add_argument(
         "--prefix-caching",
@@ -380,6 +389,25 @@ def override_token_budget(scenario: Scenario, token_budget: int | None) -> Scena
     )
 
 
+def override_num_gpu_blocks(
+    scenario: Scenario, num_gpu_blocks: int | None
+) -> Scenario:
+    if num_gpu_blocks is None:
+        return scenario
+    num_gpu_blocks = _require_int(
+        num_gpu_blocks, "num_gpu_blocks_override", minimum=1
+    )
+    engine = {**scenario.engine, "num_gpu_blocks_override": num_gpu_blocks}
+    return Scenario(
+        scenario_id=scenario.scenario_id,
+        description=scenario.description,
+        concurrency=scenario.concurrency,
+        seed=scenario.seed,
+        engine=engine,
+        requests=scenario.requests,
+    )
+
+
 def override_prefix_caching(scenario: Scenario, mode: str) -> Scenario:
     if mode == "config":
         return scenario
@@ -532,6 +560,13 @@ async def _run_request(
         if finished_s is not None and submitted_s is not None
         else None
     )
+    tpot_s = (
+        (finished_s - first_token_s) / (actual_output_tokens - 1)
+        if finished_s is not None
+        and first_token_s is not None
+        and actual_output_tokens > 1
+        else None
+    )
     return RequestTiming(
         run_id=run_id,
         scenario_id=scenario_id,
@@ -546,6 +581,7 @@ async def _run_request(
         first_token_s=_round_optional(first_token_s),
         finished_s=_round_optional(finished_s),
         ttft_s=_round_optional(ttft_s),
+        tpot_s=_round_optional(tpot_s),
         e2e_s=_round_optional(e2e_s),
         original_prompt_tokens=prepared.original_prompt_tokens,
         actual_prompt_tokens=len(prepared.prompt_token_ids),
@@ -697,6 +733,7 @@ def main() -> None:
     original = load_scenario(args.config)
     scenario = scale_scenario(original, args.prompt_scale)
     scenario = override_token_budget(scenario, args.token_budget)
+    scenario = override_num_gpu_blocks(scenario, args.num_gpu_blocks_override)
     scenario = override_prefix_caching(scenario, args.prefix_caching)
 
     from transformers import AutoTokenizer

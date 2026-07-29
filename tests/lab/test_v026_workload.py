@@ -5,6 +5,7 @@ import pytest
 
 from scripts.lab_v026_workload import (
     load_scenario,
+    override_num_gpu_blocks,
     override_prefix_caching,
     override_token_budget,
     prepare_requests,
@@ -53,6 +54,18 @@ def test_token_budget_override_rejects_non_positive_value() -> None:
 
     with pytest.raises(ValueError, match="token_budget"):
         override_token_budget(scenario, 0)
+
+
+def test_day7_pressure_scenario_has_controlled_kv_capacity() -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "d7_preemption_pressure.json")
+
+    pressured = override_num_gpu_blocks(scenario, 1450)
+
+    assert "num_gpu_blocks_override" not in scenario.engine
+    assert pressured.engine["num_gpu_blocks_override"] == 1450
+    assert scenario.engine["enable_prefix_caching"] is False
+    assert scenario.engine["scheduler_reserve_full_isl"] is False
+    assert [request.output_tokens for request in scenario.requests] == [16, 32]
 
 
 @pytest.mark.parametrize(("mode", "enabled"), [("on", True), ("off", False)])

@@ -447,6 +447,7 @@ class Scheduler(SchedulerInterface):
         scheduled_resumed_reqs: list[Request] = []
         scheduled_running_reqs: list[Request] = []
         preempted_reqs: list[Request] = []
+        trace_allocation_failures: list[dict[str, Any]] = []
 
         req_to_new_blocks: dict[str, KVCacheBlocks] = {}
         num_scheduled_tokens: dict[str, int] = {}
@@ -581,6 +582,21 @@ class Scheduler(SchedulerInterface):
                         break
 
                     # The request cannot be scheduled.
+                    trace_failure = None
+                    if self.scheduler_trace_writer is not None:
+                        trace_failure = {
+                            "phase": "running",
+                            "request_id": request.request_id,
+                            "num_new_tokens": num_new_tokens,
+                            "num_computed_tokens": request.num_computed_tokens,
+                            "num_free_blocks": (
+                                self.kv_cache_manager.block_pool.get_num_free_blocks()
+                            ),
+                            "preempted_request_id": None,
+                            "preempted_num_computed_tokens": None,
+                        }
+                        trace_allocation_failures.append(trace_failure)
+
                     # Preempt the lowest-priority request.
                     if self.policy == SchedulingPolicy.PRIORITY:
                         preempted_req = max(
@@ -609,6 +625,13 @@ class Scheduler(SchedulerInterface):
                     else:
                         preempted_req = self.running.pop()
 
+                    if trace_failure is not None:
+                        trace_failure["preempted_request_id"] = (
+                            preempted_req.request_id
+                        )
+                        trace_failure["preempted_num_computed_tokens"] = (
+                            preempted_req.num_computed_tokens
+                        )
                     self._preempt_request(preempted_req, scheduled_timestamp)
                     preempted_reqs.append(preempted_req)
                     if preempted_req == request:
@@ -961,6 +984,20 @@ class Scheduler(SchedulerInterface):
 
                 if new_blocks is None:
                     # The request cannot be scheduled.
+                    if self.scheduler_trace_writer is not None:
+                        trace_allocation_failures.append(
+                            {
+                                "phase": "waiting",
+                                "request_id": request.request_id,
+                                "num_new_tokens": num_new_tokens,
+                                "num_computed_tokens": num_computed_tokens,
+                                "num_free_blocks": (
+                                    self.kv_cache_manager.block_pool.get_num_free_blocks()
+                                ),
+                                "preempted_request_id": None,
+                                "preempted_num_computed_tokens": None,
+                            }
+                        )
 
                     # NOTE: we need to untouch the request from the encode cache
                     # manager
@@ -1210,6 +1247,7 @@ class Scheduler(SchedulerInterface):
                     scheduler_output,
                     trace_token_budget,
                     trace_prefix_cached_tokens,
+                    trace_allocation_failures,
                 )
             )
         return scheduler_output
@@ -1252,6 +1290,7 @@ class Scheduler(SchedulerInterface):
         scheduler_output: SchedulerOutput,
         token_budget: int,
         prefix_cached_tokens: dict[str, int],
+        allocation_failures: list[dict[str, Any]],
     ) -> dict[str, Any]:
         after = self._make_scheduler_trace_snapshot()
         scheduled_ids = list(scheduler_output.num_scheduled_tokens)
@@ -1321,6 +1360,7 @@ class Scheduler(SchedulerInterface):
                 "num_free_blocks_after": after["num_free_blocks"],
             },
             "requests": request_events,
+            "allocation_failures": allocation_failures,
             "scheduled_request_ids": scheduled_ids,
             "preempted_request_ids": sorted(scheduler_output.preempted_req_ids or ()),
             "finished_request_ids": sorted(scheduler_output.finished_req_ids),

@@ -112,6 +112,43 @@ new physical allocations.
 The measured allocation chain and Prefix Cache comparison are documented in
 `docs/day6_kv_cache_allocation.md`.
 
+## Run the Day 7 preemption workload
+
+Day 7 keeps the requests, token budget, and scheduler settings fixed while
+changing only the KV block count. The scenario disables
+`scheduler_reserve_full_isl` in both groups so the Scheduler can admit both
+requests and expose the running-request preemption path.
+
+Run the default-capacity baseline:
+
+```bash
+/home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/d7_preemption_pressure.json \
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct \
+  --scheduler-trace
+```
+
+Then restrict the KV pool to 1450 blocks:
+
+```bash
+/home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/d7_preemption_pressure.json \
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct \
+  --num-gpu-blocks-override 1450 \
+  --scheduler-trace
+```
+
+The trace records waiting and running allocation failures. For running
+failures, it also records the victim and its computed-token count immediately
+before `_preempt_request()` resets that progress to zero. `request_timing.csv`
+includes TPOT as `(finished - first token) / (output tokens - 1)`.
+
+With the v0.26 default `scheduler_reserve_full_isl=true`, the pressured B
+request remains waiting until its full input can fit. That admission guard is
+a separate behavior and must not be reported as a measured preemption.
+
 ## Scale prompts for the RTX 2060
 
 If canonical 8K/16K requests do not fit reliably, preserve the 1:2 ratio with:
