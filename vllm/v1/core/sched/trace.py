@@ -25,6 +25,15 @@ def tensor_metadata(tensor: Any) -> dict[str, Any]:
     }
 
 
+def tensor_layout_metadata(tensor: Any) -> dict[str, Any]:
+    """Return tensor shape and layout metadata without reading its contents."""
+    return {
+        **tensor_metadata(tensor),
+        "stride": list(tensor.stride()),
+        "storage_offset": tensor.storage_offset(),
+    }
+
+
 class JsonlTraceWriter:
     """Write trace records on a background thread."""
 

@@ -51,6 +51,7 @@ from vllm.utils.torch_utils import PIN_MEMORY, STR_DTYPE_TO_TORCH_DTYPE
 from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput
 from vllm.v1.core.sched.trace import (
     create_model_runner_trace_writer,
+    tensor_layout_metadata,
     tensor_metadata,
 )
 from vllm.v1.kv_cache_interface import KVCacheConfig, MambaSpec
@@ -516,7 +517,64 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.kernel_block_sizes,
             self.vllm_config,
         )
+        self._record_kv_cache_layout(kv_caches_dict)
         self.kv_connector = get_kv_connector(self.vllm_config, kv_caches_dict)
+
+    def _record_kv_cache_layout(self, kv_caches: dict[str, Any]) -> None:
+        """Record one-time backend and KV layout metadata for lab tracing."""
+        if self.model_runner_trace_writer is None:
+            return
+
+        from vllm.v1.attention.backends.utils import get_kv_cache_layout
+
+        groups = []
+        for kv_cache_group_id, attn_groups in enumerate(self.attn_groups):
+            for attn_group_id, group in enumerate(attn_groups):
+                layer_name = next(
+                    name for name in group.layer_names if name in kv_caches
+                )
+                kv_cache = kv_caches[layer_name]
+                spec = group.kv_cache_spec
+                backend = group.backend
+                tensor = tensor_layout_metadata(kv_cache)
+                block_dim = backend.get_kv_cache_block_dim(
+                    self.kernel_block_sizes[kv_cache_group_id],
+                    spec.num_kv_heads,
+                    spec.head_size,
+                    cache_dtype_str=self.cache_config.cache_dtype,
+                )
+                groups.append(
+                    {
+                        "kv_cache_group_id": kv_cache_group_id,
+                        "attention_group_id": attn_group_id,
+                        "backend": backend.get_name(),
+                        "spec_type": type(spec).__name__,
+                        "layer_count": len(group.layer_names),
+                        "representative_layer": layer_name,
+                        "block_size": spec.block_size,
+                        "storage_block_size": spec.storage_block_size,
+                        "kernel_block_size": self.kernel_block_sizes[
+                            kv_cache_group_id
+                        ],
+                        "num_blocks": tensor["shape"][block_dim],
+                        "num_kv_heads": spec.num_kv_heads,
+                        "head_size": spec.head_size,
+                        "head_size_v": spec.head_size_v,
+                        "sliding_window": getattr(spec, "sliding_window", None),
+                        "page_size_bytes": spec.page_size_bytes,
+                        "tensor": tensor,
+                    }
+                )
+
+        self.model_runner_trace_writer.record(
+            {
+                "schema_version": 1,
+                "event": "kv_cache_layout",
+                "layout": get_kv_cache_layout(),
+                "cache_dtype": self.cache_config.cache_dtype,
+                "groups": groups,
+            }
+        )
 
     def _init_kv_zero_meta(self) -> None:
         """Build KV-block zeroing metadata; invoked from gpu_worker."""

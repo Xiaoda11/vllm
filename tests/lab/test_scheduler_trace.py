@@ -9,6 +9,7 @@ from vllm.v1.core.sched.trace import (
     JsonlTraceWriter,
     create_model_runner_trace_writer,
     create_scheduler_trace_writer,
+    tensor_layout_metadata,
     tensor_metadata,
 )
 
@@ -18,12 +19,30 @@ class FakeTensor:
     dtype = "torch.int32"
     device = "cuda:0"
 
+    @staticmethod
+    def stride() -> tuple[int, int]:
+        return (4, 1)
+
+    @staticmethod
+    def storage_offset() -> int:
+        return 8
+
 
 def test_tensor_metadata_does_not_read_tensor_contents() -> None:
     assert tensor_metadata(FakeTensor()) == {
         "shape": [2, 4],
         "dtype": "torch.int32",
         "device": "cuda:0",
+    }
+
+
+def test_tensor_layout_metadata_does_not_read_tensor_contents() -> None:
+    assert tensor_layout_metadata(FakeTensor()) == {
+        "shape": [2, 4],
+        "dtype": "torch.int32",
+        "device": "cuda:0",
+        "stride": [4, 1],
+        "storage_offset": 8,
     }
 
 
