@@ -16,6 +16,15 @@ SCHEDULER_TRACE_PATH_ENV = "LAB_V026_SCHEDULER_TRACE_PATH"
 _CLOSE_SENTINEL = object()
 
 
+def tensor_metadata(tensor: Any) -> dict[str, Any]:
+    """Return tensor metadata without reading tensor contents."""
+    return {
+        "shape": list(tensor.shape),
+        "dtype": str(tensor.dtype),
+        "device": str(tensor.device),
+    }
+
+
 class JsonlTraceWriter:
     """Write trace records on a background thread."""
 

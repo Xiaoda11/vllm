@@ -9,7 +9,22 @@ from vllm.v1.core.sched.trace import (
     JsonlTraceWriter,
     create_model_runner_trace_writer,
     create_scheduler_trace_writer,
+    tensor_metadata,
 )
+
+
+class FakeTensor:
+    shape = (2, 4)
+    dtype = "torch.int32"
+    device = "cuda:0"
+
+
+def test_tensor_metadata_does_not_read_tensor_contents() -> None:
+    assert tensor_metadata(FakeTensor()) == {
+        "shape": [2, 4],
+        "dtype": "torch.int32",
+        "device": "cuda:0",
+    }
 
 
 def test_trace_is_disabled_without_environment(

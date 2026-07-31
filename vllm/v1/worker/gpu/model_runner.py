@@ -49,7 +49,10 @@ from vllm.utils.math_utils import cdiv
 from vllm.utils.mem_utils import DeviceMemoryProfiler, format_gib
 from vllm.utils.torch_utils import PIN_MEMORY, STR_DTYPE_TO_TORCH_DTYPE
 from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput
-from vllm.v1.core.sched.trace import create_model_runner_trace_writer
+from vllm.v1.core.sched.trace import (
+    create_model_runner_trace_writer,
+    tensor_metadata,
+)
 from vllm.v1.kv_cache_interface import KVCacheConfig, MambaSpec
 from vllm.v1.outputs import DraftTokenIds, ModelRunnerOutput
 from vllm.v1.worker.cp_utils import check_attention_cp_compatibility
@@ -1091,6 +1094,75 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         )
         return block_tables, slot_mappings
 
+    def _record_input_metadata(
+        self,
+        scheduler_output: SchedulerOutput,
+        batch_desc: BatchExecutionDescriptor,
+        input_batch: InputBatch,
+        block_tables: tuple[torch.Tensor, ...],
+        slot_mappings: torch.Tensor,
+        attn_metadata: dict[str, Any] | None,
+        model_inputs: dict[str, Any],
+    ) -> None:
+        if self.model_runner_trace_writer is None:
+            return
+        self.model_runner_trace_writer.record(
+            {
+                "schema_version": 1,
+                "event": "model_runner_inputs",
+                "timestamp_ns": time.time_ns(),
+                "step_id": scheduler_output.scheduler_step_id,
+                "request_ids": input_batch.req_ids,
+                "persistent_rows": input_batch.idx_mapping_np.tolist(),
+                "num_scheduled_tokens": input_batch.num_scheduled_tokens.tolist(),
+                "batch": {
+                    "num_reqs": input_batch.num_reqs,
+                    "num_reqs_after_padding": input_batch.num_reqs_after_padding,
+                    "num_tokens": input_batch.num_tokens,
+                    "num_tokens_after_padding": input_batch.num_tokens_after_padding,
+                    "cudagraph_mode": batch_desc.cg_mode.name,
+                },
+                "cpu_inputs": {
+                    "query_start_loc": input_batch.query_start_loc_np.tolist(),
+                    "num_computed_tokens": (
+                        input_batch.num_computed_tokens_np.tolist()
+                    ),
+                    "prefill_len": input_batch.prefill_len_np.tolist(),
+                    "num_computed_prefill_tokens": (
+                        input_batch.num_computed_prefill_tokens_np.tolist()
+                    ),
+                    "is_prefilling": input_batch.is_prefilling_np.tolist(),
+                },
+                "persistent_tensors": {
+                    "all_token_ids": tensor_metadata(self.req_states.all_token_ids.gpu),
+                    "prompt_len": tensor_metadata(self.req_states.prompt_len.gpu),
+                    "prefill_len": tensor_metadata(self.req_states.prefill_len.gpu),
+                    "total_len": tensor_metadata(self.req_states.total_len.gpu),
+                    "num_computed_tokens": tensor_metadata(
+                        self.req_states.num_computed_tokens.gpu
+                    ),
+                    "block_tables": [
+                        tensor_metadata(table.gpu)
+                        for table in self.block_tables.block_tables
+                    ],
+                },
+                "input_tensors": {
+                    "idx_mapping": tensor_metadata(input_batch.idx_mapping),
+                    "query_start_loc": tensor_metadata(input_batch.query_start_loc),
+                    "input_ids": tensor_metadata(input_batch.input_ids),
+                    "positions": tensor_metadata(input_batch.positions),
+                    "seq_lens": tensor_metadata(input_batch.seq_lens),
+                    "block_tables": [tensor_metadata(table) for table in block_tables],
+                    "slot_mappings": tensor_metadata(slot_mappings),
+                },
+                "attention_metadata": {
+                    str(group): type(metadata).__name__
+                    for group, metadata in (attn_metadata or {}).items()
+                },
+                "model_input_keys": sorted(model_inputs),
+            }
+        )
+
     def prepare_dummy_attn(
         self, input_batch: InputBatch
     ) -> tuple[tuple[torch.Tensor, ...], torch.Tensor]:
@@ -1334,6 +1406,19 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             }
             model_inputs["intermediate_tensors"] = IntermediateTensors(new_tensors)
             del intermediate_tensors
+
+        if not dummy_run:
+            assert block_tables is not None
+            assert slot_mappings is not None
+            self._record_input_metadata(
+                scheduler_output,
+                batch_desc,
+                input_batch,
+                block_tables,
+                slot_mappings,
+                attn_metadata,
+                model_inputs,
+            )
 
         # Update the EPLB meta.
         self.eplb.prepare_forward(self.model_config, input_batch.num_tokens)
