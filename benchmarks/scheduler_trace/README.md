@@ -152,6 +152,27 @@ a separate behavior and must not be reported as a measured preemption.
 The measured failure, preemption, recomputation, and request-timing evidence is
 documented in `docs/day7_preemption.md`.
 
+## Run the Day 8 Scheduler-to-MRV2 trace
+
+Day 8 reuses canonical S3 at a 2048-token budget and extends the opt-in MRV2
+JSONL with input tensor metadata:
+
+```bash
+VLLM_WSL2_ENABLE_PIN_MEMORY=1 VLLM_USE_V2_MODEL_RUNNER=1 \
+  /home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/s3_dual_simultaneous.json \
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct \
+  --token-budget 2048 \
+  --scheduler-trace
+```
+
+`model_runner_inputs` records CPU arrays already used by input preparation and
+tensor shape/dtype/device metadata. It never reads GPU tensor contents. The
+measured persistent-row, index-mapping, input-shape, block-table, slot-mapping,
+and attention-metadata chain is documented in
+`docs/scheduler_to_model_runner.md`.
+
 ## Scale prompts for the RTX 2060
 
 If canonical 8K/16K requests do not fit reliably, preserve the 1:2 ratio with:
