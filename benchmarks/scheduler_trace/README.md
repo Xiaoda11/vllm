@@ -209,6 +209,12 @@ decoding. Each measured run must verify from request timing and Scheduler trace
 that A emitted a token before B was submitted and that mixed A-decode/B-prefill
 steps actually occurred.
 
+Validate and summarize the completed six-run matrix with
+`scripts/lab_day10_analyze.py`. It writes a matrix summary CSV, segmented ITL
+CSV, and dependency-free SVG tradeoff chart. The measured 2026-08-01 matrix and
+its evidence boundaries are documented in
+`docs/day10_prefill_decode_interleaving.md`.
+
 ## Scenario intent
 
 | Scenario | Requests | Controlled question |

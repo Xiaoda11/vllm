@@ -93,9 +93,7 @@ def test_day10_scenarios_change_only_b_prompt_length(
 
 
 @pytest.mark.parametrize(("mode", "enabled"), [("on", True), ("off", False)])
-def test_prefix_caching_override_preserves_requests(
-    mode: str, enabled: bool
-) -> None:
+def test_prefix_caching_override_preserves_requests(mode: str, enabled: bool) -> None:
     scenario = load_scenario(CONFIG_DIRECTORY / "s6_shared_prefix.json")
 
     overridden = override_prefix_caching(scenario, mode)

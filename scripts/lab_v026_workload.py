@@ -422,14 +422,10 @@ def override_token_budget(scenario: Scenario, token_budget: int | None) -> Scena
     )
 
 
-def override_num_gpu_blocks(
-    scenario: Scenario, num_gpu_blocks: int | None
-) -> Scenario:
+def override_num_gpu_blocks(scenario: Scenario, num_gpu_blocks: int | None) -> Scenario:
     if num_gpu_blocks is None:
         return scenario
-    num_gpu_blocks = _require_int(
-        num_gpu_blocks, "num_gpu_blocks_override", minimum=1
-    )
+    num_gpu_blocks = _require_int(num_gpu_blocks, "num_gpu_blocks_override", minimum=1)
     engine = {**scenario.engine, "num_gpu_blocks_override": num_gpu_blocks}
     return Scenario(
         scenario_id=scenario.scenario_id,
