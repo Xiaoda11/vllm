@@ -38,6 +38,8 @@ Each run creates a unique directory under
   prompt digests, and request results.
 - `request_timing.csv`: planned/submitted/first-token/finished times, TTFT,
   E2E latency, exact token counts, and errors.
+- `token_timing.csv`: opt-in CPU-observed streaming output events for ITL
+  analysis; enable it with `--token-timing`.
 - `scheduler_trace.jsonl`: opt-in, one CPU-side Scheduler decision per line.
 - `scheduler_trace.mrv2.jsonl`: opt-in, MRV2 execution order and persistent
   request rows. Warmup records use `step_id=0`.
@@ -58,6 +60,10 @@ Flatten and join both trace streams with:
 Tracing is disabled unless `--scheduler-trace` is passed. The implementation
 copies Scheduler and MRV2 CPU state only; it does not read a GPU tensor or add
 a CUDA synchronization.
+
+Token timing is disabled unless `--token-timing` is passed. A
+`single_token_itl_s` value is emitted only when both adjacent streaming chunks
+contain exactly one token, so bundled chunks are not mislabeled as exact ITL.
 
 ## Run the Day 5 dual-prefill matrix
 
@@ -188,6 +194,20 @@ If canonical 8K/16K requests do not fit reliably, preserve the 1:2 ratio with:
 This changes S3 to 4K/8K. The metadata and CSV retain both canonical and
 effective prompt lengths. A scaled GPU run must not be reported as an 8K/16K
 measurement.
+
+## Run the Day 10 decode/prefill matrix
+
+Day 10 crosses B prompt lengths (`8192` and `16384`) with the three global
+per-step token budgets (`2048`, `4096`, and `8192`). A remains fixed at a
+1024-token prompt and 512-token output. Use
+`s5_decode_then_prefill_8k.json` for B=8K and
+`s5_decode_then_prefill.json` for B=16K, together with
+`--scheduler-trace --token-timing`.
+
+The configured 1.0-second arrival delay is not itself proof that A is already
+decoding. Each measured run must verify from request timing and Scheduler trace
+that A emitted a token before B was submitted and that mixed A-decode/B-prefill
+steps actually occurred.
 
 ## Scenario intent
 

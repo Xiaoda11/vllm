@@ -1,6 +1,6 @@
 {
   "scenario_id": "S5",
-  "description": "B=16K arrives while A is expected to be in a long decode.",
+  "description": "B=8K arrives while A is expected to be in a long decode.",
   "concurrency": 2,
   "seed": 3,
   "engine": {
@@ -27,7 +27,7 @@
     },
     {
       "request_id": "B",
-      "prompt_tokens": 16384,
+      "prompt_tokens": 8192,
       "output_tokens": 32,
       "arrival_s": 1.0
     }

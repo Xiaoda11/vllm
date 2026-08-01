@@ -4,12 +4,14 @@ from pathlib import Path
 import pytest
 
 from scripts.lab_v026_workload import (
+    TokenTiming,
     load_scenario,
     override_num_gpu_blocks,
     override_prefix_caching,
     override_token_budget,
     prepare_requests,
     scale_scenario,
+    write_token_timing_csv,
 )
 
 CONFIG_DIRECTORY = (
@@ -68,6 +70,28 @@ def test_day7_pressure_scenario_has_controlled_kv_capacity() -> None:
     assert [request.output_tokens for request in scenario.requests] == [16, 32]
 
 
+@pytest.mark.parametrize(
+    ("config_name", "expected_b_prompt_tokens"),
+    [
+        ("s5_decode_then_prefill_8k.json", 8192),
+        ("s5_decode_then_prefill.json", 16384),
+    ],
+)
+def test_day10_scenarios_change_only_b_prompt_length(
+    config_name: str, expected_b_prompt_tokens: int
+) -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / config_name)
+
+    assert [request.request_id for request in scenario.requests] == ["A", "B"]
+    assert scenario.requests[0].prompt_tokens == 1024
+    assert scenario.requests[0].output_tokens == 512
+    assert scenario.requests[0].arrival_s == 0.0
+    assert scenario.requests[1].prompt_tokens == expected_b_prompt_tokens
+    assert scenario.requests[1].output_tokens == 32
+    assert scenario.requests[1].arrival_s == 1.0
+    assert scenario.engine["stream_interval"] == 1
+
+
 @pytest.mark.parametrize(("mode", "enabled"), [("on", True), ("off", False)])
 def test_prefix_caching_override_preserves_requests(
     mode: str, enabled: bool
@@ -108,3 +132,20 @@ def test_duplicate_request_ids_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="duplicate request_id"):
         load_scenario(config_path)
+
+
+def test_token_timing_csv_preserves_missing_and_exact_itl(tmp_path: Path) -> None:
+    path = tmp_path / "token_timing.csv"
+    timings = [
+        TokenTiming("run", "S5", "A", 2, 1, 2, 0.3, 0.1, 0.1),
+        TokenTiming("run", "S5", "A", 1, 1, 1, 0.2, None, None),
+    ]
+
+    write_token_timing_csv(path, timings)
+
+    assert path.read_text().splitlines() == [
+        "run_id,scenario_id,request_id,event_index,chunk_tokens,"
+        "cumulative_output_tokens,emitted_s,inter_event_s,single_token_itl_s",
+        "run,S5,A,1,1,1,0.2,,",
+        "run,S5,A,2,1,2,0.3,0.1,0.1",
+    ]

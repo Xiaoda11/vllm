@@ -64,6 +64,18 @@ CSV_FIELDS = [
     "finish_reason",
 ]
 
+TOKEN_TIMING_CSV_FIELDS = [
+    "run_id",
+    "scenario_id",
+    "request_id",
+    "event_index",
+    "chunk_tokens",
+    "cumulative_output_tokens",
+    "emitted_s",
+    "inter_event_s",
+    "single_token_itl_s",
+]
+
 
 @dataclass(frozen=True)
 class RequestSpec:
@@ -120,6 +132,19 @@ class RequestTiming:
     finish_reason: str
 
 
+@dataclass
+class TokenTiming:
+    run_id: str
+    scenario_id: str
+    request_id: str
+    event_index: int
+    chunk_tokens: int
+    cumulative_output_tokens: int
+    emitted_s: float
+    inter_event_s: float | None
+    single_token_itl_s: float | None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -168,6 +193,14 @@ def parse_args() -> argparse.Namespace:
         "--scheduler-trace",
         action="store_true",
         help="Write Scheduler and MRV2 JSONL traces in the run directory.",
+    )
+    parser.add_argument(
+        "--token-timing",
+        action="store_true",
+        help=(
+            "Write CPU-observed streaming output event times for ITL analysis. "
+            "This does not inspect GPU tensors or synchronize the GPU."
+        ),
     )
     return parser.parse_args()
 
@@ -505,6 +538,7 @@ async def _run_request(
     scenario_id: str,
     workload_started: float,
     semaphore: asyncio.Semaphore,
+    token_timings: list[TokenTiming] | None,
 ) -> RequestTiming:
     from vllm import SamplingParams
     from vllm.inputs.engine import tokens_input
@@ -519,6 +553,9 @@ async def _run_request(
     first_token_s: float | None = None
     finished_s: float | None = None
     actual_output_tokens = 0
+    event_index = 0
+    previous_emitted_s: float | None = None
+    previous_chunk_tokens: int | None = None
     finish_reason = ""
     status = "passed"
     error = ""
@@ -542,6 +579,33 @@ async def _run_request(
                 if chunk_tokens and first_token_s is None:
                     first_token_s = time.perf_counter() - workload_started
                 actual_output_tokens += chunk_tokens
+                if chunk_tokens and token_timings is not None:
+                    event_index += 1
+                    emitted_s = time.perf_counter() - workload_started
+                    inter_event_s = (
+                        emitted_s - previous_emitted_s
+                        if previous_emitted_s is not None
+                        else None
+                    )
+                    token_timings.append(
+                        TokenTiming(
+                            run_id=run_id,
+                            scenario_id=scenario_id,
+                            request_id=spec.request_id,
+                            event_index=event_index,
+                            chunk_tokens=chunk_tokens,
+                            cumulative_output_tokens=actual_output_tokens,
+                            emitted_s=round(emitted_s, 6),
+                            inter_event_s=_round_optional(inter_event_s),
+                            single_token_itl_s=_round_optional(
+                                inter_event_s
+                                if chunk_tokens == 1 and previous_chunk_tokens == 1
+                                else None
+                            ),
+                        )
+                    )
+                    previous_emitted_s = emitted_s
+                    previous_chunk_tokens = chunk_tokens
                 if output.outputs:
                     finish_reason = output.outputs[0].finish_reason or finish_reason
             finished_s = time.perf_counter() - workload_started
@@ -600,6 +664,7 @@ async def execute_scenario(
     prepared_requests: tuple[PreparedRequest, ...],
     model: Path,
     run_id: str,
+    token_timings: list[TokenTiming] | None = None,
 ) -> list[RequestTiming]:
     from vllm.engine.arg_utils import AsyncEngineArgs
     from vllm.v1.engine.async_llm import AsyncLLM
@@ -618,6 +683,7 @@ async def execute_scenario(
                     scenario_id=scenario.scenario_id,
                     workload_started=workload_started,
                     semaphore=semaphore,
+                    token_timings=token_timings,
                 )
             )
             for prepared in prepared_requests
@@ -632,6 +698,17 @@ def write_csv(path: Path, timings: list[RequestTiming]) -> None:
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         writer.writeheader()
         for timing in timings:
+            writer.writerow(asdict(timing))
+
+
+def write_token_timing_csv(path: Path, timings: list[TokenTiming]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=TOKEN_TIMING_CSV_FIELDS)
+        writer.writeheader()
+        for timing in sorted(
+            timings,
+            key=lambda item: (item.emitted_s, item.request_id, item.event_index),
+        ):
             writer.writerow(asdict(timing))
 
 
@@ -677,6 +754,7 @@ def build_metadata(
         "git_status_short": git_status_short(),
         "generator_path": str(Path(__file__).resolve()),
         "generator_sha256": file_sha256(Path(__file__).resolve()),
+        "config_sha256": file_sha256(config_path),
         "command": shlex.join(sys.argv),
         "python": platform.python_version(),
         "config_path": str(config_path.resolve()),
@@ -773,15 +851,22 @@ def main() -> None:
     )
 
     try:
+        token_timings: list[TokenTiming] | None = [] if args.token_timing else None
         timings = asyncio.run(
             execute_scenario(
                 scenario=scenario,
                 prepared_requests=prepared_requests,
                 model=args.model,
                 run_id=run_id,
+                token_timings=token_timings,
             )
         )
         write_csv(run_directory / "request_timing.csv", timings)
+        if token_timings is not None:
+            write_token_timing_csv(
+                run_directory / "token_timing.csv",
+                token_timings,
+            )
         metadata["status"] = (
             "passed"
             if all(timing.status == "passed" for timing in timings)
@@ -794,6 +879,11 @@ def main() -> None:
                 "model_runner": str(
                     (run_directory / "scheduler_trace.mrv2.jsonl").resolve()
                 ),
+            }
+        if args.token_timing:
+            metadata["timing_artifacts"] = {
+                "request": str((run_directory / "request_timing.csv").resolve()),
+                "token": str((run_directory / "token_timing.csv").resolve()),
             }
     except Exception as exc:
         metadata["status"] = "engine_failed"
