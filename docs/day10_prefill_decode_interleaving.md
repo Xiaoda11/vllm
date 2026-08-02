@@ -1,107 +1,103 @@
-# Day 10: Prefill/Decode Interleaving
+# Day 10：Prefill/Decode 交错实验
 
-## Engineering question
+## 工程问题
 
-When request A is already decoding and request B arrives with an 8K or 16K
-prompt, how does the v0.26 unified Scheduler divide the global per-step token
-budget, and what latency tradeoff is visible for A and B?
+当请求 A 已经进入 Decode、请求 B 携带 8K 或 16K prompt 到达时，v0.26
+统一 Scheduler 如何分配每个 step 的全局 token budget？A 和 B 会表现出什么
+延迟取舍？
 
-## Version and execution path
+## 版本与执行路径
 
-- Source lane: v0.26.0-based `exp/mrv2-scheduler-trace`.
-- Environment: `/home/xiaoda/vllm-lab/.venv-v026`.
-- Intended measured path: Path A, MRV2 with
-  `VLLM_WSL2_ENABLE_PIN_MEMORY=1` and `VLLM_USE_V2_MODEL_RUNNER=1`.
-- Model: `/home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct`, FP16.
-- Measured commit: `7c3664f0ce` (`bench: add decode prefill timing matrix`).
-- Measured runner/backend: MRV2 and `TRITON_ATTN`; the trace reports one
-  24-layer `FullAttentionSpec` group using NHD layout.
+- 源码分支：基于 v0.26.0 的 `exp/mrv2-scheduler-trace`。
+- 运行环境：`/home/xiaoda/vllm-lab/.venv-v026`。
+- 实测执行路径：Path A；设置 `VLLM_WSL2_ENABLE_PIN_MEMORY=1` 和
+  `VLLM_USE_V2_MODEL_RUNNER=1`，使用 MRV2。
+- 模型：`/home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct`，FP16。
+- 实测 commit：`7c3664f0ce`（`bench: add decode prefill timing matrix`）。
+- 实测 runner/backend：MRV2 和 `TRITON_ATTN`；trace 显示一个包含 24 层的
+  `FullAttentionSpec` group，使用 NHD layout。
 
-## Pre-run hypotheses
+## 实验前假设
 
-1. Once A is decoding, its next output token consumes one token from the
-   global `max_num_batched_tokens` budget before B receives the remaining
-   budget for a partial prefill.
-2. A mixed step therefore schedules one token for A and at most `budget - 1`
-   tokens for B, subject to the Scheduler's other limits and KV allocation.
-3. A larger token budget should reduce the number of partial-prefill steps and
-   tend to reduce B's TTFT, while the larger mixed batch may increase A's ITL.
-   This is only a prediction; a single cold run is insufficient for a stable
-   performance claim.
-4. B=16K should require more partial-prefill steps than B=8K at the same
-   budget, extending the interval in which A decode and B prefill overlap.
+1. A 进入 Decode 后，它的下一个输出 token 会先消耗全局
+   `max_num_batched_tokens` budget 中的 1 token，剩余 budget 再分给 B 的
+   partial prefill。
+2. 因此，一个混合 step 会给 A 调度 1 token，并在 Scheduler 其他限制和 KV
+   分配允许的情况下，最多给 B 调度 `budget - 1` tokens。
+3. 更大的 token budget 应减少 partial-prefill step 数，并可能降低 B 的
+   TTFT；但更大的混合 batch 也可能提高 A 的 ITL。这只是预测，单次冷启动
+   实验不足以支持稳定性能结论。
+4. 在相同 budget 下，B=16K 应比 B=8K 需要更多 partial-prefill steps，因而
+   延长 A Decode 与 B Prefill 的交错区间。
 
-## Controlled workload
+## 受控 Workload
 
-- A: 1024 prompt tokens, 512 output tokens, arrival at 0 seconds.
-- B: 8192 or 16384 prompt tokens, 32 output tokens, nominal arrival at 1.0
-  seconds.
-- Global token budget: 2048, 4096, or 8192.
-- Concurrency: 2; chunked prefill enabled; prefix caching disabled; eager mode.
-- Matrix size: two B prompt lengths by three budgets, for six measured runs.
+- A：1024 prompt tokens、512 output tokens，在 0 秒到达。
+- B：8192 或 16384 prompt tokens、32 output tokens，计划在 1.0 秒到达。
+- 全局 token budget：2048、4096 或 8192。
+- 并发数：2；开启 chunked prefill；关闭 prefix caching；使用 eager mode。
+- 矩阵规模：两种 B prompt 长度 × 三种 budget，共六组实测。
 
-The original 0.25-second delay failed calibration: B was submitted at
-0.250434 seconds, before A's first token at 0.338839 seconds. The corrected
-1.0-second delay is still only a workload input, not proof of interleaving. A run is
-valid for the matrix only if the measured artifacts show that A emitted a token
-before B was submitted and at least one Scheduler step contains A decode plus B
-prefill.
+最初的 0.25 秒延迟未通过校准：B 在 0.250434 秒提交，早于 A 在 0.338839
+秒产生首 token。修正后的 1.0 秒仍然只是 workload 输入，不能单独证明发生了
+交错。只有当实测产物同时证明 A 在 B 提交前已经产生 token，并且至少一个
+Scheduler step 同时包含 A Decode 和 B Prefill，该组运行才可纳入矩阵。
 
-## Observables
+## 观测量
 
-- Scheduler JSONL/CSV: per-request scheduled tokens, initial/remaining budget,
-  running/waiting order, KV allocation, and preemption.
-- MRV2 JSONL: execution order, persistent row, `idx_mapping`,
-  `query_start_loc`, and input tensor shapes.
-- Request timing: A TPOT/E2E and B TTFT/E2E.
-- Token timing: CPU-observed streaming output event time and exact
-  single-token ITL where adjacent chunks each contain one token.
-- Batch classes: A decode-only, A-decode/B-prefill mixed, B prefill-only, and
-  decode-only after B's prefill.
+- Scheduler JSONL/CSV：每个请求的 scheduled tokens、初始/剩余 budget、
+  running/waiting 顺序、KV 分配和 preemption。
+- MRV2 JSONL：执行顺序、persistent row、`idx_mapping`、
+  `query_start_loc` 和输入 tensor shape。
+- Request timing：A 的 TPOT/E2E，以及 B 的 TTFT/E2E。
+- Token timing：CPU 观察到的流式输出事件时间；只有相邻 chunk 都恰好包含
+  1 token 时，才记录为精确的 single-token ITL。
+- Batch 类型：仅 A Decode、A-Decode/B-Prefill 混合、仅 B Prefill，以及 B
+  Prefill 完成后的 Decode batch。
 
-The traces establish batch composition and shape. They do not establish GPU
-kernel time or hardware causality; those claims require the later Nsight work.
+这些 trace 可以证明 batch 的组成和 shape，但不能证明 GPU kernel 耗时或硬件
+因果关系；后者需要后续 Nsight 实验。
 
-## Decision criteria
+## 判定标准
 
-A run passes workload validation when:
+一组 workload 必须同时满足以下条件才算通过：
 
-1. both requests finish with their requested output-token counts;
-2. A's first-token time precedes B's submitted time;
-3. at least one step schedules A with one token and B with prompt tokens;
-4. scheduled tokens never exceed the recorded global budget;
-5. Scheduler scheduled-token totals agree with the MRV2 input shapes;
-6. bundled streaming chunks are not mislabeled as exact single-token ITL.
+1. 两个请求都生成了各自要求的准确 output-token 数；
+2. A 的首 token 时间早于 B 的提交时间；
+3. 至少一个 step 给 A 调度 1 token，同时给 B 调度 prompt tokens；
+4. scheduled tokens 永远不超过记录的全局 token budget；
+5. Scheduler scheduled-token 总数与 MRV2 input shape 一致；
+6. 多 token 的流式 chunk 不会被误记成精确 single-token ITL。
 
-## Artifacts and validation
+## 实验产物与验证结果
 
-The six formal run IDs are:
+六组正式 run ID 为：
 
 - `day10-s5-b8k-budget{2048,4096,8192}-20260801`
 - `day10-s5-b16k-budget{2048,4096,8192}-20260801`
 
-Each directory under `/home/xiaoda/vllm-lab/outputs` contains
-`run_metadata.json`, `startup.log`, `request_timing.csv`, `token_timing.csv`,
-both JSONL traces, and the flattened Scheduler CSV. The combined analysis is
-under `/home/xiaoda/vllm-lab/outputs/day10-matrix-analysis-20260801`.
+每个目录均位于 `/home/xiaoda/vllm-lab/outputs`，并包含
+`run_metadata.json`、`startup.log`、`request_timing.csv`、
+`token_timing.csv`、两条 JSONL trace 和展开后的 Scheduler CSV。综合分析目录为
+`/home/xiaoda/vllm-lab/outputs/day10-matrix-analysis-20260801`。
 
-All six runs passed the predeclared checks:
+六组运行全部通过预先声明的检查：
 
-- both requests produced their exact requested output-token count;
-- A emitted its first token before B was submitted;
-- every run contained A-decode/B-prefill mixed steps;
-- no step exceeded its global token budget;
-- every actual forward step matched Scheduler scheduled tokens against MRV2
-  `input_ids.shape[0]`, batch token count, and `query_start_loc[-1]`;
-- there were zero preemptions and zero allocation failures.
+- 两个请求都生成了准确的目标 output-token 数；
+- A 在 B 提交前已经产生首 token；
+- 每组都存在 A-Decode/B-Prefill 混合 step；
+- 没有任何 step 超过全局 token budget；
+- 每个实际 forward step 中，Scheduler scheduled tokens 均与 MRV2 的
+  `input_ids.shape[0]`、batch token 数和 `query_start_loc[-1]` 一致；
+- preemption 和 allocation failure 均为 0。
 
-## Measured Scheduler behavior
+## Scheduler 实测行为
 
-In every full mixed-prefill step, A consumed one token and B consumed the
-remaining `budget - 1` tokens. The final prompt-tail step used only the tokens
-needed to reach B's exact prompt length.
+在每个完整的混合 Prefill step 中，A 消耗 1 token，B 消耗剩余的
+`budget - 1` tokens。最后一个 prompt 尾块 step 只调度 B 达到准确 prompt
+长度所需的 tokens。
 
-| B prompt | Budget | Full mixed shape `[A,B]` | Tail shape | Mixed prefill steps |
+| B prompt | Budget | 完整混合 shape `[A,B]` | 尾块 shape | 混合 Prefill step 数 |
 |---:|---:|---:|---:|---:|
 | 8K | 2048 | `[1,2047]` × 4 | `[1,4]` | 5 |
 | 8K | 4096 | `[1,4095]` × 2 | `[1,2]` | 3 |
@@ -110,17 +106,17 @@ needed to reach B's exact prompt length.
 | 16K | 4096 | `[1,4095]` × 4 | `[1,4]` | 5 |
 | 16K | 8192 | `[1,8191]` × 2 | `[1,2]` | 3 |
 
-For a full 4096-budget step, for example, the corresponding MRV2 evidence is
-`num_scheduled_tokens=[1,4095]`, `query_start_loc=[0,1,4096]`, and
-`input_ids.shape=[4096]`. This closes the step-level chain from the Scheduler's
-global budget to the MRV2 input batch without reading a GPU tensor.
+以一个完整的 4096-budget step 为例，对应的 MRV2 证据为
+`num_scheduled_tokens=[1,4095]`、`query_start_loc=[0,1,4096]` 和
+`input_ids.shape=[4096]`。这在不读取 GPU tensor 的前提下，闭合了从
+Scheduler 全局 budget 到 MRV2 输入 batch 的 step-level 证据链。
 
-## Measured latency and throughput
+## 延迟与吞吐实测
 
-These are one cold-start run per matrix point under eager mode. They describe
-the observed runs; they are not a stable performance benchmark.
+矩阵中每个点只运行了一次冷启动，并使用 eager mode。下表描述的是实际运行，
+不是稳定性能 benchmark。
 
-| B prompt | Budget | A TPOT ms | B TTFT ms | A ITL during B prefill mean / P95 ms | Output token/s |
+| B prompt | Budget | A TPOT ms | B TTFT ms | B Prefill 期间 A ITL mean / P95 ms | Output token/s |
 |---:|---:|---:|---:|---:|---:|
 | 8K | 2048 | 34.281 | 5336.749 | 764.127 / 2067.815 | 30.719 |
 | 8K | 4096 | 34.808 | 5327.839 | 892.135 / 3245.029 | 30.108 |
@@ -129,58 +125,53 @@ the observed runs; they are not a stable performance benchmark.
 | 16K | 4096 | 64.643 | 20670.714 | 2586.731 / 8024.546 | 16.331 |
 | 16K | 8192 | 64.884 | 20689.070 | 4142.045 / 13304.196 | 16.267 |
 
-Outside B's prefill phase, A's mean ITL remained close to 24–25 ms in every
-run: before B arrived, during B's 32-token decode, and after B finished. During
-B's prefill, the mean and P95 ITL rose sharply. Increasing the budget reduced
-the number of partial-prefill mixed steps but made individual stalls longer.
+在所有运行中，B Prefill 阶段之外的 A 平均 ITL 都接近 24–25 ms，包括 B
+到达前、B 的 32-token Decode 期间，以及 B 完成后。B Prefill 期间，A 的
+mean 和 P95 ITL 明显升高。增大 budget 会减少 partial-prefill 混合 step 的
+数量，但会让单次停顿更长。
 
-B's TTFT did not improve materially with a larger budget in this matrix: the
-8K range was 13.257 ms across the three runs, and the 16K range was 47.891 ms.
-The observation here is a change in stall granularity, not a demonstrated TTFT
-gain. Average A TPOT also hides the multi-second Prefill-phase tail stalls, so
-ITL segmentation is the more informative metric for this workload.
+在该矩阵中，更大的 budget 没有实质改善 B 的 TTFT：三组 8K 运行的 TTFT
+极差为 13.257 ms，三组 16K 运行的极差为 47.891 ms。因此，本次观测到的是
+停顿粒度变化，而不是已经得到证明的 TTFT 收益。A 的平均 TPOT 同样会掩盖
+Prefill 阶段长达数秒的尾部停顿，所以对于该 workload，分阶段 ITL 是信息量
+更高的指标。
 
-The reported throughput is completed output tokens divided by workload
-makespan. It is not input throughput and should not be compared across B=8K
-and B=16K as if the work were identical.
+表中的吞吐定义为：完成的 output tokens 除以 workload makespan。它不是 input
+吞吐，因此不能把 B=8K 与 B=16K 视为相同工作量直接比较。
 
-## Batch and kernel evidence boundary
+## Batch 与 kernel 的证据边界
 
-The trace directly establishes four batch phases: A decode-only,
-A-decode/B-prefill mixed, two-request decode, and A decode-only after B
-finishes. All attention metadata entries identify `TritonAttentionMetadata`,
-and the startup log records JIT of `kernel_unified_attention` and
-`reduce_segments`.
+Trace 直接证明了四种 batch 阶段：仅 A Decode、A-Decode/B-Prefill 混合、
+双请求 Decode，以及 B 完成后的仅 A Decode。所有 attention metadata 都是
+`TritonAttentionMetadata`；启动日志记录了 `kernel_unified_attention` 和
+`reduce_segments` 的 JIT。
 
-This evidence does not contain per-kernel duration. It therefore supports the
-batch-shape and backend statements above, but not a claim that a particular
-kernel caused an ITL spike. Kernel timing and hardware causality remain Day
-16/17 Nsight questions.
+这些证据不包含每个 kernel 的持续时间。因此，它们可以支持上述 batch shape
+和 backend 结论，但不能支持“某个特定 kernel 导致 ITL spike”的说法。Kernel
+耗时和硬件因果关系仍然属于 Day 16/17 的 Nsight 问题。
 
-## Source facts, measurements, and inference
+## 源码事实、实测结果与推断
 
-- Source/trace fact: v0.26's unified Scheduler charged A's decode token and B's
-  prefill chunk against one global budget in every mixed step.
-- Measurement: larger budgets produced fewer, larger mixed-prefill batches;
-  B TTFT stayed nearly flat within each prompt length while A's Prefill-phase
-  ITL tail increased.
-- Inference to test later: for this model/backend, total prefill work rather
-  than the number of partial-prefill steps dominated B TTFT. Nsight or repeated
-  warm runs are required before making a causal performance statement.
+- 源码/trace 事实：在每个混合 step 中，v0.26 统一 Scheduler 将 A 的 Decode
+  token 和 B 的 Prefill chunk 计入同一个全局 budget。
+- 实测结果：更大的 budget 产生更少但更大的 mixed-prefill batches；在相同
+  prompt 长度内，B 的 TTFT 近似不变，而 A 的 Prefill 阶段 ITL 尾部增大。
+- 待验证推断：在当前模型/backend 上，B 的 TTFT 主要由 Prefill 总工作量决定，
+  而不是由 partial-prefill step 数决定。在做出因果性能结论前，还需要 Nsight
+  或重复 warm runs。
 
-## Unresolved question
+## 尚未解释的问题
 
-Would repeated warm runs preserve the nearly flat B TTFT and increasing ITL
-tail trend, or are parts of the single-run differences caused by cold Triton
-JIT, temperature, or normal run-to-run variance?
+如果进行重复 warm runs，B TTFT 近似不变、ITL 尾部随 budget 增大的趋势是否
+仍然成立？还是部分单次运行差异来自冷 Triton JIT、温度或正常运行波动？
 
-## 30-second interview explanation
+## 30 秒面试表达
 
-I constructed a vLLM v0.26 MRV2 workload where a 1K/512-token request was
-already decoding when an 8K or 16K Prefill arrived. The Scheduler trace showed
-that each mixed step first charged one decode token, then gave the remaining
-global budget to Prefill: for a 4096 budget the MRV2 batch was `[1,4095]` with
-`query_start_loc=[0,1,4096]`. Larger budgets reduced the number of Prefill
-chunks but created fewer, longer ITL stalls for the decoding request, while B's
-single-run TTFT stayed almost flat. This shows why average TPOT alone can hide
-tail latency and why the next policy should be selected from ITL evidence.
+我构造了一个 vLLM v0.26 MRV2 workload：A 是一个 1K prompt、生成 512 tokens
+的请求，在它进入 Decode 后，再加入一个 8K 或 16K Prefill。Scheduler trace
+显示，每个混合 step 会先给 A 分配 1 个 Decode token，再把剩余全局 budget
+分给 Prefill。例如 budget 为 4096 时，MRV2 batch 是 `[1,4095]`，对应
+`query_start_loc=[0,1,4096]`。增大 budget 会减少 Prefill chunk 数，但会给
+Decode 请求造成次数更少、持续时间更长的 ITL 停顿，而 B 的单次运行 TTFT
+近似不变。这说明平均 TPOT 会掩盖尾部延迟，也为下一步从 ITL 证据选择调度
+策略提供了依据。
