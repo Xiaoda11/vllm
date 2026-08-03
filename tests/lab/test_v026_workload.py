@@ -6,6 +6,7 @@ import pytest
 from scripts.lab_v026_workload import (
     TokenTiming,
     load_scenario,
+    override_long_prefill_token_threshold,
     override_num_gpu_blocks,
     override_prefix_caching,
     override_token_budget,
@@ -56,6 +57,24 @@ def test_token_budget_override_rejects_non_positive_value() -> None:
 
     with pytest.raises(ValueError, match="token_budget"):
         override_token_budget(scenario, 0)
+
+
+def test_long_prefill_threshold_override_preserves_requests() -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "s5_decode_then_prefill_8k.json")
+
+    overridden = override_long_prefill_token_threshold(scenario, 2048)
+
+    assert overridden.engine["long_prefill_token_threshold"] == 2048
+    assert overridden.requests == scenario.requests
+    assert "long_prefill_token_threshold" not in scenario.engine
+
+
+def test_long_prefill_threshold_override_accepts_disabled_value() -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "s5_decode_then_prefill_8k.json")
+
+    overridden = override_long_prefill_token_threshold(scenario, 0)
+
+    assert overridden.engine["long_prefill_token_threshold"] == 0
 
 
 def test_day7_pressure_scenario_has_controlled_kv_capacity() -> None:

@@ -27,6 +27,7 @@ ENGINE_KEYS = {
     "enable_prefix_caching",
     "enforce_eager",
     "gpu_memory_utilization",
+    "long_prefill_token_threshold",
     "max_model_len",
     "max_num_batched_tokens",
     "max_num_partial_prefills",
@@ -177,6 +178,14 @@ def parse_args() -> argparse.Namespace:
         "--num-gpu-blocks-override",
         type=int,
         help="Override the KV cache block count for controlled pressure experiments.",
+    )
+    parser.add_argument(
+        "--long-prefill-token-threshold",
+        type=int,
+        help=(
+            "Override engine.long_prefill_token_threshold for controlled "
+            "prefill-quantum experiments."
+        ),
     )
     parser.add_argument(
         "--prefix-caching",
@@ -427,6 +436,25 @@ def override_num_gpu_blocks(scenario: Scenario, num_gpu_blocks: int | None) -> S
         return scenario
     num_gpu_blocks = _require_int(num_gpu_blocks, "num_gpu_blocks_override", minimum=1)
     engine = {**scenario.engine, "num_gpu_blocks_override": num_gpu_blocks}
+    return Scenario(
+        scenario_id=scenario.scenario_id,
+        description=scenario.description,
+        concurrency=scenario.concurrency,
+        seed=scenario.seed,
+        engine=engine,
+        requests=scenario.requests,
+    )
+
+
+def override_long_prefill_token_threshold(
+    scenario: Scenario, threshold: int | None
+) -> Scenario:
+    if threshold is None:
+        return scenario
+    threshold = _require_int(
+        threshold, "long_prefill_token_threshold", minimum=0
+    )
+    engine = {**scenario.engine, "long_prefill_token_threshold": threshold}
     return Scenario(
         scenario_id=scenario.scenario_id,
         description=scenario.description,
@@ -808,6 +836,9 @@ def main() -> None:
     scenario = scale_scenario(original, args.prompt_scale)
     scenario = override_token_budget(scenario, args.token_budget)
     scenario = override_num_gpu_blocks(scenario, args.num_gpu_blocks_override)
+    scenario = override_long_prefill_token_threshold(
+        scenario, args.long_prefill_token_threshold
+    )
     scenario = override_prefix_caching(scenario, args.prefix_caching)
 
     from transformers import AutoTokenizer
