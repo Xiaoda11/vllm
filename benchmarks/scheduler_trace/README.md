@@ -263,6 +263,13 @@ delay, not to provide a stable performance percentage.
 The measured repeated benefit, burst tradeoff, and upstream PR Gate are
 documented in `docs/day14_waiting_hol_benchmark.md`.
 
+For the bounded one-admission variant, compare both lifetime extremes. Re-run
+`d14b_waiting_hol_burst.json` for the long-lived case and use
+`d15_waiting_hol_short_burst.json` for the 32-output-token case. Analyze D15 by
+passing `--scenario-id D15` to `scripts/lab_day14_burst_analyze.py`. The policy
+audit and current no-PR decision are documented in
+`docs/day15_waiting_bypass_pr_audit.md`.
+
 ## Scenario intent
 
 | Scenario | Requests | Controlled question |

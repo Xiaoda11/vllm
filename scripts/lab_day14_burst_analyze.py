@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-run", type=Path, required=True)
     parser.add_argument("--modified-run", type=Path, required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
+    parser.add_argument("--scenario-id", default="D14B", choices=("D14B", "D15"))
     return parser.parse_args()
 
 
@@ -38,13 +39,15 @@ def _first_scheduled_step(steps: list[dict[str, Any]], prefix: str) -> int:
     raise ValueError(f"request {prefix} was never scheduled")
 
 
-def analyze_burst_run(run_directory: Path, expected_mode: str) -> dict[str, Any]:
+def analyze_burst_run(
+    run_directory: Path, expected_mode: str, scenario_id: str = "D14B"
+) -> dict[str, Any]:
     metadata = json.loads((run_directory / "run_metadata.json").read_text())
     if metadata["status"] != "passed":
         raise ValueError(f"{run_directory}: workload did not pass")
     scenario = metadata["effective_scenario"]
-    if scenario["scenario_id"] != "D14B":
-        raise ValueError(f"{run_directory}: expected D14B")
+    if scenario["scenario_id"] != scenario_id:
+        raise ValueError(f"{run_directory}: expected {scenario_id}")
     enabled = bool(
         scenario["engine"].get("scheduler_allow_waiting_bypass", False)
     )
@@ -131,6 +134,7 @@ def analyze_burst_run(run_directory: Path, expected_mode: str) -> dict[str, Any]
         "a_ttft_ms": round(float(results["A"]["ttft_s"]) * 1000, 3),
         "b_ttft_ms": round(float(results["B"]["ttft_s"]) * 1000, 3),
         "b_e2e_ms": round(float(results["B"]["e2e_s"]) * 1000, 3),
+        "c1_ttft_ms": round(float(results["C1"]["ttft_s"]) * 1000, 3),
         "c_ttft_median_ms": round(statistics.median(c_ttft_s) * 1000, 3),
         "c_ttft_max_ms": round(max(c_ttft_s) * 1000, 3),
         "all_ttft_jain": round(
@@ -159,6 +163,7 @@ def summarize_pair(
         "a_ttft_ms",
         "b_ttft_ms",
         "b_e2e_ms",
+        "c1_ttft_ms",
         "c_ttft_median_ms",
         "c_ttft_max_ms",
         "all_ttft_jain",
@@ -200,17 +205,22 @@ def summarize_pair(
 
 def main() -> None:
     args = parse_args()
-    baseline = analyze_burst_run(args.baseline_run, "baseline")
-    modified = analyze_burst_run(args.modified_run, "modified")
+    baseline = analyze_burst_run(
+        args.baseline_run, "baseline", scenario_id=args.scenario_id
+    )
+    modified = analyze_burst_run(
+        args.modified_run, "modified", scenario_id=args.scenario_id
+    )
     summary = summarize_pair(baseline, modified)
     args.output_directory.mkdir(parents=True, exist_ok=False)
-    with (args.output_directory / "day14_burst_runs.csv").open(
+    output_stem = args.scenario_id.lower() + "_burst"
+    with (args.output_directory / f"{output_stem}_runs.csv").open(
         "w", newline="", encoding="utf-8"
     ) as handle:
         writer = csv.DictWriter(handle, fieldnames=list(baseline))
         writer.writeheader()
         writer.writerows([baseline, modified])
-    (args.output_directory / "day14_burst_summary.json").write_text(
+    (args.output_directory / f"{output_stem}_summary.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary, indent=2))

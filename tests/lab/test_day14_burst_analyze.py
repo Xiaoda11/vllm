@@ -6,6 +6,7 @@ def test_summarize_pair_detects_b_delay() -> None:
         "a_ttft_ms": 1.0,
         "b_ttft_ms": 10.0,
         "b_e2e_ms": 11.0,
+        "c1_ttft_ms": 10.0,
         "c_ttft_median_ms": 10.0,
         "c_ttft_max_ms": 11.0,
         "all_ttft_jain": 1.0,
