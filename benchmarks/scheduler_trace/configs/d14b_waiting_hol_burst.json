@@ -1,0 +1,84 @@
+{
+  "scenario_id": "D14B",
+  "description": "Eight short requests bypass a blocked long request and retain KV during decode.",
+  "concurrency": 10,
+  "seed": 3,
+  "engine": {
+    "dtype": "half",
+    "max_model_len": 16416,
+    "max_num_batched_tokens": 2048,
+    "max_num_seqs": 10,
+    "gpu_memory_utilization": 0.7,
+    "enforce_eager": true,
+    "enable_chunked_prefill": true,
+    "enable_prefix_caching": false,
+    "scheduler_reserve_full_isl": true,
+    "stream_interval": 1,
+    "disable_log_stats": true,
+    "enable_log_requests": false,
+    "trust_remote_code": false,
+    "seed": 3
+  },
+  "requests": [
+    {
+      "request_id": "A",
+      "prompt_tokens": 8192,
+      "output_tokens": 512,
+      "arrival_s": 0.0
+    },
+    {
+      "request_id": "B",
+      "prompt_tokens": 16384,
+      "output_tokens": 32,
+      "arrival_s": 7.0
+    },
+    {
+      "request_id": "C1",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 7.01
+    },
+    {
+      "request_id": "C2",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 7.02
+    },
+    {
+      "request_id": "C3",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 7.03
+    },
+    {
+      "request_id": "C4",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 7.04
+    },
+    {
+      "request_id": "C5",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 7.05
+    },
+    {
+      "request_id": "C6",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 7.06
+    },
+    {
+      "request_id": "C7",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 7.07
+    },
+    {
+      "request_id": "C8",
+      "prompt_tokens": 1024,
+      "output_tokens": 512,
+      "arrival_s": 7.08
+    }
+  ]
+}
