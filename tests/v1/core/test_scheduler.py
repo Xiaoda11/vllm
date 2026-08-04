@@ -179,6 +179,79 @@ def test_waiting_allocation_bypass_is_opt_in(allow_bypass: bool):
         assert not scheduler.skipped_waiting
 
 
+def test_waiting_allocation_bypass_preserves_failed_request_order():
+    scheduler = create_scheduler(
+        model=os.getenv("VLLM_TEST_MODEL", "facebook/opt-125m"),
+        max_num_seqs=2,
+        max_num_batched_tokens=16,
+        max_model_len=32,
+        num_blocks=10,
+        block_size=4,
+        scheduler_allow_waiting_bypass=True,
+    )
+    request_a = create_requests(
+        num_requests=1,
+        num_tokens=16,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["A"],
+    )[0]
+    scheduler.add_request(request_a)
+
+    output = scheduler.schedule()
+    scheduler.update_from_output(
+        output,
+        ModelRunnerOutput(
+            req_ids=["A"],
+            req_id_to_index={"A": 0},
+            sampled_token_ids=[[1000]],
+            logprobs=None,
+            prompt_logprobs_dict={},
+            pooler_output=[],
+        ),
+    )
+
+    request_b, request_c = create_requests(
+        num_requests=2,
+        num_tokens=24,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["B", "C"],
+    )
+    request_d = create_requests(
+        num_requests=1,
+        num_tokens=4,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["D"],
+    )[0]
+    for request in (request_b, request_c, request_d):
+        scheduler.add_request(request)
+
+    output = scheduler.schedule()
+
+    assert output.num_scheduled_tokens == {"A": 1, "D": 4}
+    assert list(scheduler.skipped_waiting) == [request_b, request_c]
+    assert not scheduler.waiting
+
+    # Both failed requests remain ahead of newly waiting work, and their
+    # original FCFS order is preserved.
+    request_e = create_requests(
+        num_requests=1,
+        num_tokens=4,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["E"],
+    )[0]
+    scheduler.add_request(request_e)
+    output = scheduler.schedule()
+
+    assert "B" not in output.num_scheduled_tokens
+    assert "C" not in output.num_scheduled_tokens
+    assert list(scheduler.skipped_waiting) == [request_b, request_c]
+    assert list(scheduler.waiting) == [request_e]
+
+
 def test_finish_request():
     scheduler = create_scheduler()
     requests = create_requests(num_requests=10)
@@ -2351,6 +2424,7 @@ def create_scheduler_with_priority(
     use_ec_connector: bool = False,
     ec_role: str | None = None,
     use_v2_model_runner: bool | None = None,
+    scheduler_allow_waiting_bypass: bool = False,
 ) -> Scheduler:
     """Create scheduler with priority policy enabled.
 
@@ -2378,6 +2452,7 @@ def create_scheduler_with_priority(
         max_num_batched_tokens=max_num_batched_tokens,
         max_model_len=max_model_len,
         long_prefill_token_threshold=long_prefill_token_threshold,
+        scheduler_allow_waiting_bypass=scheduler_allow_waiting_bypass,
         disable_chunked_mm_input=disable_chunked_mm_input,
         enable_chunked_prefill=True,
         is_encoder_decoder=model_config.is_encoder_decoder,
@@ -2561,6 +2636,68 @@ def create_requests_with_priority(
         )
         requests.append(request)
     return requests
+
+
+def test_waiting_allocation_bypass_respects_priority_order():
+    scheduler = create_scheduler_with_priority(
+        model=os.getenv("VLLM_TEST_MODEL", "facebook/opt-125m"),
+        max_num_seqs=3,
+        max_num_batched_tokens=16,
+        max_model_len=32,
+        num_blocks=10,
+        block_size=4,
+        scheduler_allow_waiting_bypass=True,
+    )
+    request_a = create_requests_with_priority(
+        num_requests=1,
+        num_tokens=16,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["A"],
+        priorities=[0],
+        arrival_times=[0.0],
+    )[0]
+    scheduler.add_request(request_a)
+
+    output = scheduler.schedule()
+    scheduler.update_from_output(
+        output,
+        ModelRunnerOutput(
+            req_ids=["A"],
+            req_id_to_index={"A": 0},
+            sampled_token_ids=[[1000]],
+            logprobs=None,
+            prompt_logprobs_dict={},
+            pooler_output=[],
+        ),
+    )
+
+    request_b = create_requests_with_priority(
+        num_requests=1,
+        num_tokens=24,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["B"],
+        priorities=[0],
+        arrival_times=[1.0],
+    )[0]
+    request_c = create_requests_with_priority(
+        num_requests=1,
+        num_tokens=4,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["C"],
+        priorities=[1],
+        arrival_times=[2.0],
+    )[0]
+    scheduler.add_request(request_c)
+    scheduler.add_request(request_b)
+
+    output = scheduler.schedule()
+
+    assert output.num_scheduled_tokens == {"A": 1, "C": 4}
+    assert list(scheduler.skipped_waiting) == [request_b]
+    assert not scheduler.waiting
 
 
 def test_priority_scheduling_basic_ordering():
