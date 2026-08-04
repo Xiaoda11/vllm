@@ -303,6 +303,10 @@ class Scheduler(SchedulerInterface):
         self.scheduler_allow_waiting_bypass = (
             self.scheduler_config.scheduler_allow_waiting_bypass
         )
+        # Requests in this set have already allowed one later request to be
+        # admitted while they were blocked on KV allocation. They cannot be
+        # bypassed again until they are scheduled or removed.
+        self._waiting_bypass_exhausted: set[str] = set()
 
         self.has_mamba_layers = kv_cache_config.has_mamba_layers
         self.needs_kv_cache_zeroing = kv_cache_config.needs_kv_cache_zeroing
@@ -698,6 +702,7 @@ class Scheduler(SchedulerInterface):
         # Next, schedule the WAITING requests.
         if not preempted_reqs and self._pause_state == PauseState.UNPAUSED:
             step_skipped_waiting = create_request_queue(self.policy)
+            allocation_bypassed_req_ids: set[str] = set()
 
             while (self.waiting or self.skipped_waiting) and token_budget > 0:
                 # Paused streaming sessions (WAITING_FOR_STREAMING_REQ) are not
@@ -1004,9 +1009,13 @@ class Scheduler(SchedulerInterface):
                     # manager
                     if request.has_encoder_inputs:
                         self.encoder_cache_manager.free(request)
-                    if self.scheduler_allow_waiting_bypass:
+                    if (
+                        self.scheduler_allow_waiting_bypass
+                        and request_id not in self._waiting_bypass_exhausted
+                    ):
                         request_queue.pop_request()
                         step_skipped_waiting.prepend_request(request)
+                        allocation_bypassed_req_ids.add(request_id)
                         continue
                     break
 
@@ -1031,6 +1040,12 @@ class Scheduler(SchedulerInterface):
                         )
 
                 request = request_queue.pop_request()
+                self._waiting_bypass_exhausted.discard(request_id)
+                bypass_limit_reached = bool(allocation_bypassed_req_ids)
+                if bypass_limit_reached:
+                    self._waiting_bypass_exhausted.update(
+                        allocation_bypassed_req_ids
+                    )
                 if load_kv_async:
                     # If loading async, allocate memory and put request
                     # into the WAITING_FOR_REMOTE_KV state.
@@ -1061,6 +1076,8 @@ class Scheduler(SchedulerInterface):
                                 num_computed_tokens,
                             )
                         )
+                    if bypass_limit_reached:
+                        break
                     continue
 
                 self.running.append(request)
@@ -1106,6 +1123,9 @@ class Scheduler(SchedulerInterface):
                         self.encoder_cache_manager.allocate(request, i)
                         if self.ec_connector is not None:
                             self.ec_connector.update_state_after_alloc(request, i)
+
+                if bypass_limit_reached:
+                    break
 
             # re-queue requests skipped in this pass ahead of older skipped items.
             if step_skipped_waiting:
@@ -2386,6 +2406,7 @@ class Scheduler(SchedulerInterface):
 
         # Second pass: set status and free requests
         for request in valid_requests:
+            self._waiting_bypass_exhausted.discard(request.request_id)
             delay_free_blocks = False
             if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
                 delay_free_blocks = (

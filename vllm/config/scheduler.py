@@ -145,9 +145,10 @@ class SchedulerConfig:
 
     scheduler_allow_waiting_bypass: bool = False
     """If True, a waiting request that cannot allocate KV cache in the current
-    step is temporarily skipped so later requests can be considered. The
-    skipped request is retried first on the next step. This avoids admission
-    head-of-line blocking while preserving the full-ISL reservation check."""
+    step may be temporarily skipped so one later request can be admitted. After
+    that admission, the blocked request must be scheduled or removed before
+    more requests can bypass it. This bounds the relaxation of admission order
+    while preserving the full-ISL reservation check."""
 
     watermark: float = Field(default=0.0, ge=0.0, lt=1.0)
     """Fraction of total KV cache blocks to keep free (the watermark) when

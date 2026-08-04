@@ -252,6 +252,87 @@ def test_waiting_allocation_bypass_preserves_failed_request_order():
     assert list(scheduler.waiting) == [request_e]
 
 
+def test_waiting_allocation_bypass_admits_at_most_one_later_request():
+    scheduler = create_scheduler(
+        model=os.getenv("VLLM_TEST_MODEL", "facebook/opt-125m"),
+        max_num_seqs=4,
+        max_num_batched_tokens=16,
+        max_model_len=48,
+        num_blocks=13,
+        block_size=4,
+        scheduler_allow_waiting_bypass=True,
+    )
+    request_a = create_requests(
+        num_requests=1,
+        num_tokens=16,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["A"],
+    )[0]
+    scheduler.add_request(request_a)
+
+    output = scheduler.schedule()
+    scheduler.update_from_output(
+        output,
+        ModelRunnerOutput(
+            req_ids=["A"],
+            req_id_to_index={"A": 0},
+            sampled_token_ids=[[1000]],
+            logprobs=None,
+            prompt_logprobs_dict={},
+            pooler_output=[],
+        ),
+    )
+
+    request_b = create_requests(
+        num_requests=1,
+        num_tokens=36,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["B"],
+    )[0]
+    request_c, request_d = create_requests(
+        num_requests=2,
+        num_tokens=4,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["C", "D"],
+    )
+    for request in (request_b, request_c, request_d):
+        scheduler.add_request(request)
+
+    output = scheduler.schedule()
+
+    assert output.num_scheduled_tokens == {"A": 1, "C": 4}
+    assert list(scheduler.skipped_waiting) == [request_b]
+    assert list(scheduler.waiting) == [request_d]
+    scheduler.update_from_output(
+        output,
+        ModelRunnerOutput(
+            req_ids=["A", "C"],
+            req_id_to_index={"A": 0, "C": 1},
+            sampled_token_ids=[[1001], [1002]],
+            logprobs=None,
+            prompt_logprobs_dict={},
+            pooler_output=[],
+        ),
+    )
+
+    # B is retried first, but its bypass allowance is exhausted. D cannot be
+    # admitted ahead of B even though D would fit in the remaining KV cache.
+    output = scheduler.schedule()
+
+    assert output.num_scheduled_tokens == {"A": 1, "C": 1}
+    assert list(scheduler.skipped_waiting) == [request_b]
+    assert list(scheduler.waiting) == [request_d]
+
+    scheduler.finish_requests("B", RequestStatus.FINISHED_ABORTED)
+    assert "B" not in scheduler._waiting_bypass_exhausted
+
+    output = scheduler.schedule()
+    assert output.num_scheduled_tokens["D"] == 4
+
+
 def test_finish_request():
     scheduler = create_scheduler()
     requests = create_requests(num_requests=10)
