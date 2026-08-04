@@ -30,7 +30,7 @@ class FakeTokenizer:
 def test_fixed_scenarios_are_valid(config_path: Path) -> None:
     scenario = load_scenario(config_path)
 
-    assert scenario.scenario_id == config_path.name[:2].upper()
+    assert scenario.scenario_id == config_path.stem.split("_", 1)[0].upper()
     assert scenario.requests
 
 
@@ -87,6 +87,22 @@ def test_day7_pressure_scenario_has_controlled_kv_capacity() -> None:
     assert scenario.engine["enable_prefix_caching"] is False
     assert scenario.engine["scheduler_reserve_full_isl"] is False
     assert [request.output_tokens for request in scenario.requests] == [16, 32]
+
+
+def test_day13_hol_scenario_keeps_full_isl_guard_enabled() -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "d13_waiting_hol_blocking.json")
+
+    pressured = override_num_gpu_blocks(scenario, 1450)
+
+    assert pressured.engine["num_gpu_blocks_override"] == 1450
+    assert scenario.engine["scheduler_reserve_full_isl"] is True
+    assert [request.request_id for request in scenario.requests] == ["A", "B", "C"]
+    assert [request.prompt_tokens for request in scenario.requests] == [
+        8192,
+        16384,
+        1024,
+    ]
+    assert [request.arrival_s for request in scenario.requests] == [0.0, 7.0, 7.0]
 
 
 @pytest.mark.parametrize(

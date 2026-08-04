@@ -215,6 +215,27 @@ CSV, and dependency-free SVG tradeoff chart. The measured 2026-08-01 matrix and
 its evidence boundaries are documented in
 `docs/day10_prefill_decode_interleaving.md`.
 
+## Run the Day 13 waiting head-of-line baseline
+
+Day 13 ends the Prefill-quantum code path after Gate A/B and uses a three-request
+KV-pressure workload to test waiting admission head-of-line blocking. Keep the
+default full-input reservation enabled and restrict the KV pool to 1450 blocks:
+
+```bash
+VLLM_WSL2_ENABLE_PIN_MEMORY=1 VLLM_USE_V2_MODEL_RUNNER=1 \
+  /home/xiaoda/vllm-lab/.venv-v026/bin/python \
+  scripts/lab_v026_workload.py \
+  --config benchmarks/scheduler_trace/configs/d13_waiting_hol_blocking.json \
+  --model /home/xiaoda/vllm-lab/models/Qwen2.5-0.5B-Instruct \
+  --num-gpu-blocks-override 1450 \
+  --scheduler-trace --token-timing
+```
+
+The baseline must prove from the same Scheduler step that B fails full-ISL
+allocation while C remains behind it even though C's full input would fit in the
+reported free blocks. The measured Gate A/B decision and the policy hypothesis
+are documented in `docs/day13_prefill_quantum_gate.md`.
+
 ## Scenario intent
 
 | Scenario | Requests | Controlled question |
