@@ -300,6 +300,9 @@ class Scheduler(SchedulerInterface):
         self.scheduler_reserve_full_isl = (
             self.scheduler_config.scheduler_reserve_full_isl
         )
+        self.scheduler_allow_waiting_bypass = (
+            self.scheduler_config.scheduler_allow_waiting_bypass
+        )
 
         self.has_mamba_layers = kv_cache_config.has_mamba_layers
         self.needs_kv_cache_zeroing = kv_cache_config.needs_kv_cache_zeroing
@@ -626,9 +629,7 @@ class Scheduler(SchedulerInterface):
                         preempted_req = self.running.pop()
 
                     if trace_failure is not None:
-                        trace_failure["preempted_request_id"] = (
-                            preempted_req.request_id
-                        )
+                        trace_failure["preempted_request_id"] = preempted_req.request_id
                         trace_failure["preempted_num_computed_tokens"] = (
                             preempted_req.num_computed_tokens
                         )
@@ -1003,6 +1004,10 @@ class Scheduler(SchedulerInterface):
                     # manager
                     if request.has_encoder_inputs:
                         self.encoder_cache_manager.free(request)
+                    if self.scheduler_allow_waiting_bypass:
+                        request_queue.pop_request()
+                        step_skipped_waiting.prepend_request(request)
+                        continue
                     break
 
                 # KVTransfer: the connector uses this info to determine

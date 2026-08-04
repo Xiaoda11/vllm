@@ -613,6 +613,9 @@ class EngineArgs:
     disable_chunked_mm_input: bool = SchedulerConfig.disable_chunked_mm_input
 
     scheduler_reserve_full_isl: bool = SchedulerConfig.scheduler_reserve_full_isl
+    scheduler_allow_waiting_bypass: bool = (
+        SchedulerConfig.scheduler_allow_waiting_bypass
+    )
     prefill_schedule_interval: int = SchedulerConfig.prefill_schedule_interval
 
     watermark: float = SchedulerConfig.watermark
@@ -1473,6 +1476,10 @@ class EngineArgs:
             "--scheduler-reserve-full-isl",
             **scheduler_kwargs["scheduler_reserve_full_isl"],
         )
+        scheduler_group.add_argument(
+            "--scheduler-allow-waiting-bypass",
+            **scheduler_kwargs["scheduler_allow_waiting_bypass"],
+        )
         scheduler_group.add_argument("--watermark", **scheduler_kwargs["watermark"])
         scheduler_group.add_argument(
             "--prefill-schedule-interval",
@@ -2194,6 +2201,7 @@ class EngineArgs:
             max_long_partial_prefills=self.max_long_partial_prefills,
             long_prefill_token_threshold=self.long_prefill_token_threshold,
             scheduler_reserve_full_isl=self.scheduler_reserve_full_isl,
+            scheduler_allow_waiting_bypass=self.scheduler_allow_waiting_bypass,
             watermark=self.watermark,
             prefill_schedule_interval=self.prefill_schedule_interval,
             disable_hybrid_kv_cache_manager=self.disable_hybrid_kv_cache_manager,

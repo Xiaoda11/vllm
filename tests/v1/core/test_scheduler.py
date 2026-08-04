@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import dataclasses
+import os
 from concurrent.futures import Future
 from unittest.mock import Mock
 
@@ -111,6 +112,71 @@ def test_add_requests():
         scheduler.add_request(request)
         assert request.request_id in scheduler.requests
         assert len(scheduler.waiting) == i + 1
+
+
+@pytest.mark.parametrize("allow_bypass", [False, True])
+def test_waiting_allocation_bypass_is_opt_in(allow_bypass: bool):
+    scheduler = create_scheduler(
+        model=os.getenv("VLLM_TEST_MODEL", "facebook/opt-125m"),
+        max_num_seqs=3,
+        max_num_batched_tokens=16,
+        max_model_len=32,
+        num_blocks=10,
+        block_size=4,
+        scheduler_allow_waiting_bypass=allow_bypass,
+    )
+    request_a = create_requests(
+        num_requests=1,
+        num_tokens=16,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["A"],
+    )[0]
+    scheduler.add_request(request_a)
+
+    output = scheduler.schedule()
+    assert output.num_scheduled_tokens == {"A": 16}
+    scheduler.update_from_output(
+        output,
+        ModelRunnerOutput(
+            req_ids=["A"],
+            req_id_to_index={"A": 0},
+            sampled_token_ids=[[1000]],
+            logprobs=None,
+            prompt_logprobs_dict={},
+            pooler_output=[],
+        ),
+    )
+
+    request_b = create_requests(
+        num_requests=1,
+        num_tokens=24,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["B"],
+    )[0]
+    request_c = create_requests(
+        num_requests=1,
+        num_tokens=4,
+        max_tokens=8,
+        block_size=4,
+        req_ids=["C"],
+    )[0]
+    scheduler.add_request(request_b)
+    scheduler.add_request(request_c)
+
+    output = scheduler.schedule()
+
+    assert output.num_scheduled_tokens["A"] == 1
+    assert "B" not in output.num_scheduled_tokens
+    if allow_bypass:
+        assert output.num_scheduled_tokens["C"] == 4
+        assert list(scheduler.skipped_waiting) == [request_b]
+        assert not scheduler.waiting
+    else:
+        assert "C" not in output.num_scheduled_tokens
+        assert list(scheduler.waiting) == [request_b, request_c]
+        assert not scheduler.skipped_waiting
 
 
 def test_finish_request():

@@ -35,6 +35,7 @@ ENGINE_KEYS = {
     "max_num_scheduled_tokens",
     "num_gpu_blocks_override",
     "scheduler_reserve_full_isl",
+    "scheduler_allow_waiting_bypass",
     "seed",
     "stream_interval",
     "trust_remote_code",
@@ -192,6 +193,12 @@ def parse_args() -> argparse.Namespace:
         choices=("config", "on", "off"),
         default="config",
         help="Override engine.enable_prefix_caching for controlled comparisons.",
+    )
+    parser.add_argument(
+        "--waiting-bypass",
+        choices=("config", "on", "off"),
+        default="config",
+        help="Override engine.scheduler_allow_waiting_bypass.",
     )
     parser.add_argument(
         "--validate-only",
@@ -451,9 +458,7 @@ def override_long_prefill_token_threshold(
 ) -> Scenario:
     if threshold is None:
         return scenario
-    threshold = _require_int(
-        threshold, "long_prefill_token_threshold", minimum=0
-    )
+    threshold = _require_int(threshold, "long_prefill_token_threshold", minimum=0)
     engine = {**scenario.engine, "long_prefill_token_threshold": threshold}
     return Scenario(
         scenario_id=scenario.scenario_id,
@@ -471,6 +476,22 @@ def override_prefix_caching(scenario: Scenario, mode: str) -> Scenario:
     if mode not in ("on", "off"):
         raise ValueError("prefix_caching must be one of: config, on, off")
     engine = {**scenario.engine, "enable_prefix_caching": mode == "on"}
+    return Scenario(
+        scenario_id=scenario.scenario_id,
+        description=scenario.description,
+        concurrency=scenario.concurrency,
+        seed=scenario.seed,
+        engine=engine,
+        requests=scenario.requests,
+    )
+
+
+def override_waiting_bypass(scenario: Scenario, mode: str) -> Scenario:
+    if mode == "config":
+        return scenario
+    if mode not in ("on", "off"):
+        raise ValueError("waiting_bypass must be one of: config, on, off")
+    engine = {**scenario.engine, "scheduler_allow_waiting_bypass": mode == "on"}
     return Scenario(
         scenario_id=scenario.scenario_id,
         description=scenario.description,
@@ -840,6 +861,7 @@ def main() -> None:
         scenario, args.long_prefill_token_threshold
     )
     scenario = override_prefix_caching(scenario, args.prefix_caching)
+    scenario = override_waiting_bypass(scenario, args.waiting_bypass)
 
     from transformers import AutoTokenizer
 

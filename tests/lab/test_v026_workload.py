@@ -10,6 +10,7 @@ from scripts.lab_v026_workload import (
     override_num_gpu_blocks,
     override_prefix_caching,
     override_token_budget,
+    override_waiting_bypass,
     prepare_requests,
     scale_scenario,
     write_token_timing_csv,
@@ -104,6 +105,17 @@ def test_day13_hol_scenario_keeps_full_isl_guard_enabled() -> None:
         1024,
     ]
     assert [request.arrival_s for request in scenario.requests] == [0.0, 7.0, 7.01]
+
+
+@pytest.mark.parametrize(("mode", "enabled"), [("on", True), ("off", False)])
+def test_waiting_bypass_override_preserves_requests(mode: str, enabled: bool) -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "d13_waiting_hol_blocking.json")
+
+    overridden = override_waiting_bypass(scenario, mode)
+
+    assert overridden.engine["scheduler_allow_waiting_bypass"] is enabled
+    assert overridden.requests == scenario.requests
+    assert "scheduler_allow_waiting_bypass" not in scenario.engine
 
 
 @pytest.mark.parametrize(
