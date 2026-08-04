@@ -103,7 +103,7 @@ def test_day13_hol_scenario_keeps_full_isl_guard_enabled() -> None:
         16384,
         1024,
     ]
-    assert [request.arrival_s for request in scenario.requests] == [0.0, 7.0, 7.0]
+    assert [request.arrival_s for request in scenario.requests] == [0.0, 7.0, 7.01]
 
 
 @pytest.mark.parametrize(

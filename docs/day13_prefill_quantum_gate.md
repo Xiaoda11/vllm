@@ -97,7 +97,8 @@ threshold 的重新包装。
 
 - A：8K prompt + 512 decode，先占用约 513 个 KV blocks；
 - B：16K prompt，随后到达并位于 waiting 队首，需要约 1024 blocks；
-- C：1K prompt，紧跟 B 到达，只需要约 64 blocks；
+- C：1K prompt，在 B 后 10 ms 到达，只需要约 64 blocks；10 ms 间隔用于
+  固定异步提交顺序，不作为性能变量；
 - KV pool：1450 blocks；full-ISL reservation 保持开启。
 - max model length：16416，与 B 的 16K prompt + 32 output 边界一致，且不超过
   1450 blocks 提供的 23200-token KV capacity。

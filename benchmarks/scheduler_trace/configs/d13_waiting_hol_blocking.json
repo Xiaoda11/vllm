@@ -36,7 +36,7 @@
       "request_id": "C",
       "prompt_tokens": 1024,
       "output_tokens": 32,
-      "arrival_s": 7.0
+      "arrival_s": 7.01
     }
   ]
 }
