@@ -84,6 +84,7 @@ def test_day7_pressure_scenario_has_controlled_kv_capacity() -> None:
 
     assert "num_gpu_blocks_override" not in scenario.engine
     assert pressured.engine["num_gpu_blocks_override"] == 1450
+    assert scenario.engine["max_model_len"] == 16416
     assert scenario.engine["enable_prefix_caching"] is False
     assert scenario.engine["scheduler_reserve_full_isl"] is False
     assert [request.output_tokens for request in scenario.requests] == [16, 32]

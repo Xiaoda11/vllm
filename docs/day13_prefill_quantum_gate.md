@@ -99,6 +99,8 @@ threshold 的重新包装。
 - B：16K prompt，随后到达并位于 waiting 队首，需要约 1024 blocks；
 - C：1K prompt，紧跟 B 到达，只需要约 64 blocks；
 - KV pool：1450 blocks；full-ISL reservation 保持开启。
+- max model length：16416，与 B 的 16K prompt + 32 output 边界一致，且不超过
+  1450 blocks 提供的 23200-token KV capacity。
 
 预期 baseline：B 因剩余 blocks 不足而 admission failure，当前 `break` 使 C
 一同等待。候选默认关闭策略只在 waiting allocation failure 时，把本轮失败的
