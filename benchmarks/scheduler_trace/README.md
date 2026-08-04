@@ -236,6 +236,16 @@ allocation while C remains behind it even though C's full input would fit in the
 reported free blocks. The measured Gate A/B decision and the policy hypothesis
 are documented in `docs/day13_prefill_quantum_gate.md`.
 
+Run the opt-in policy with the same workload and capacity by adding:
+
+```bash
+--waiting-bypass on
+```
+
+The corresponding core CLI flag is `--scheduler-allow-waiting-bypass`. It is
+disabled by default. Baseline/Modified trace evidence, implementation details,
+and boundary risks are documented in `docs/day13_waiting_hol_policy.md`.
+
 ## Scenario intent
 
 | Scenario | Requests | Controlled question |
