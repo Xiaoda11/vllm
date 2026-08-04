@@ -246,6 +246,23 @@ The corresponding core CLI flag is `--scheduler-allow-waiting-bypass`. It is
 disabled by default. Baseline/Modified trace evidence, implementation details,
 and boundary risks are documented in `docs/day13_waiting_hol_policy.md`.
 
+## Run the Day 14 waiting HOL PR Gate
+
+Repeat the D13 workload in interleaved Baseline/Modified order at least three
+times per mode, then validate the six directories with
+`scripts/lab_day14_analyze.py`. The analyzer rejects runs without ordered B/C
+submission, a same-step HOL witness, successful requests, or consistent MRV2
+input shapes.
+
+Use `d14b_waiting_hol_burst.json` for the fairness counterexample. It places
+eight 1K/512 short requests behind B while A is decoding. Run one descriptive
+Baseline/Modified pair with the same 1450-block override and validate it with
+`scripts/lab_day14_burst_analyze.py`. This pair is intended to expose long-head
+delay, not to provide a stable performance percentage.
+
+The measured repeated benefit, burst tradeoff, and upstream PR Gate are
+documented in `docs/day14_waiting_hol_benchmark.md`.
+
 ## Scenario intent
 
 | Scenario | Requests | Controlled question |
