@@ -201,6 +201,12 @@ def parse_args() -> argparse.Namespace:
         help="Override engine.scheduler_allow_waiting_bypass.",
     )
     parser.add_argument(
+        "--reserve-full-isl",
+        choices=("config", "on", "off"),
+        default="config",
+        help="Override engine.scheduler_reserve_full_isl.",
+    )
+    parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Validate config and token construction without starting vLLM.",
@@ -492,6 +498,22 @@ def override_waiting_bypass(scenario: Scenario, mode: str) -> Scenario:
     if mode not in ("on", "off"):
         raise ValueError("waiting_bypass must be one of: config, on, off")
     engine = {**scenario.engine, "scheduler_allow_waiting_bypass": mode == "on"}
+    return Scenario(
+        scenario_id=scenario.scenario_id,
+        description=scenario.description,
+        concurrency=scenario.concurrency,
+        seed=scenario.seed,
+        engine=engine,
+        requests=scenario.requests,
+    )
+
+
+def override_reserve_full_isl(scenario: Scenario, mode: str) -> Scenario:
+    if mode == "config":
+        return scenario
+    if mode not in ("on", "off"):
+        raise ValueError("reserve_full_isl must be one of: config, on, off")
+    engine = {**scenario.engine, "scheduler_reserve_full_isl": mode == "on"}
     return Scenario(
         scenario_id=scenario.scenario_id,
         description=scenario.description,
@@ -862,6 +884,7 @@ def main() -> None:
     )
     scenario = override_prefix_caching(scenario, args.prefix_caching)
     scenario = override_waiting_bypass(scenario, args.waiting_bypass)
+    scenario = override_reserve_full_isl(scenario, args.reserve_full_isl)
 
     from transformers import AutoTokenizer
 

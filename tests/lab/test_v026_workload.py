@@ -9,6 +9,7 @@ from scripts.lab_v026_workload import (
     override_long_prefill_token_threshold,
     override_num_gpu_blocks,
     override_prefix_caching,
+    override_reserve_full_isl,
     override_token_budget,
     override_waiting_bypass,
     prepare_requests,
@@ -116,6 +117,19 @@ def test_waiting_bypass_override_preserves_requests(mode: str, enabled: bool) ->
     assert overridden.engine["scheduler_allow_waiting_bypass"] is enabled
     assert overridden.requests == scenario.requests
     assert "scheduler_allow_waiting_bypass" not in scenario.engine
+
+
+@pytest.mark.parametrize(("mode", "enabled"), [("on", True), ("off", False)])
+def test_reserve_full_isl_override_preserves_requests(
+    mode: str, enabled: bool
+) -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "d13_waiting_hol_blocking.json")
+
+    overridden = override_reserve_full_isl(scenario, mode)
+
+    assert overridden.engine["scheduler_reserve_full_isl"] is enabled
+    assert overridden.requests == scenario.requests
+    assert scenario.engine["scheduler_reserve_full_isl"] is True
 
 
 @pytest.mark.parametrize(
