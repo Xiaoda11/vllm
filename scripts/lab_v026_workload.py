@@ -224,6 +224,26 @@ def parse_args() -> argparse.Namespace:
             "This does not inspect GPU tensors or synchronize the GPU."
         ),
     )
+    parser.add_argument(
+        "--torch-profile",
+        action="store_true",
+        help=(
+            "Profile a bounded worker-step window with the vLLM PyTorch "
+            "profiler. Traces are written under the run directory."
+        ),
+    )
+    parser.add_argument(
+        "--torch-profile-delay-iterations",
+        type=int,
+        default=60,
+        help="Worker iterations to skip before starting the bounded profile.",
+    )
+    parser.add_argument(
+        "--torch-profile-max-iterations",
+        type=int,
+        default=20,
+        help="Maximum worker iterations to record after the profile starts.",
+    )
     return parser.parse_args()
 
 
@@ -524,6 +544,42 @@ def override_reserve_full_isl(scenario: Scenario, mode: str) -> Scenario:
     )
 
 
+def override_torch_profiler(
+    scenario: Scenario,
+    profile_directory: Path,
+    delay_iterations: int,
+    max_iterations: int,
+) -> Scenario:
+    if delay_iterations < 0:
+        raise ValueError("torch_profile_delay_iterations must be >= 0")
+    if max_iterations <= 0:
+        raise ValueError("torch_profile_max_iterations must be > 0")
+
+    engine = dict(scenario.engine)
+    engine["profiler_config"] = {
+        "profiler": "torch",
+        "torch_profiler_dir": str(profile_directory.resolve()),
+        "torch_profiler_record_shapes": True,
+        "torch_profiler_with_memory": False,
+        "torch_profiler_with_stack": False,
+        "torch_profiler_with_flops": False,
+        "torch_profiler_use_gzip": True,
+        "torch_profiler_dump_cuda_time_total": True,
+        "detailed_trace_annotation": True,
+        "ignore_frontend": True,
+        "delay_iterations": delay_iterations,
+        "max_iterations": max_iterations,
+    }
+    return Scenario(
+        scenario_id=scenario.scenario_id,
+        description=scenario.description,
+        concurrency=scenario.concurrency,
+        seed=scenario.seed,
+        engine=engine,
+        requests=scenario.requests,
+    )
+
+
 def _repeat_to_length(pattern: list[int], length: int) -> list[int]:
     if not pattern:
         raise ValueError("token pattern must not be empty")
@@ -738,7 +794,13 @@ async def execute_scenario(
 
     engine_args = AsyncEngineArgs(model=str(model), **scenario.engine)
     engine = AsyncLLM.from_engine_args(engine_args)
+    profiler_config = scenario.engine.get("profiler_config", {})
+    profile_enabled = profiler_config.get("profiler") == "torch"
+    profile_started = False
     try:
+        if profile_enabled:
+            await engine.start_profile(run_id)
+            profile_started = True
         workload_started = time.perf_counter()
         semaphore = asyncio.Semaphore(scenario.concurrency)
         tasks = [
@@ -757,6 +819,8 @@ async def execute_scenario(
         ]
         return list(await asyncio.gather(*tasks))
     finally:
+        if profile_started:
+            await engine.stop_profile()
         engine.shutdown()
 
 
@@ -903,6 +967,13 @@ def main() -> None:
         f"{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     )
     run_directory = create_run_directory(args.output_root, run_id)
+    if args.torch_profile:
+        scenario = override_torch_profiler(
+            scenario,
+            run_directory / "torch_profile",
+            args.torch_profile_delay_iterations,
+            args.torch_profile_max_iterations,
+        )
     if args.scheduler_trace:
         os.environ["LAB_V026_SCHEDULER_TRACE_PATH"] = str(
             (run_directory / "scheduler_trace.jsonl").resolve()

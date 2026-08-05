@@ -11,6 +11,7 @@ from scripts.lab_v026_workload import (
     override_prefix_caching,
     override_reserve_full_isl,
     override_token_budget,
+    override_torch_profiler,
     override_waiting_bypass,
     prepare_requests,
     scale_scenario,
@@ -130,6 +131,45 @@ def test_reserve_full_isl_override_preserves_requests(
     assert overridden.engine["scheduler_reserve_full_isl"] is enabled
     assert overridden.requests == scenario.requests
     assert scenario.engine["scheduler_reserve_full_isl"] is True
+
+
+def test_torch_profiler_override_is_bounded_and_preserves_requests(
+    tmp_path: Path,
+) -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "d13_waiting_hol_blocking.json")
+
+    overridden = override_torch_profiler(scenario, tmp_path, 60, 20)
+
+    profiler = overridden.engine["profiler_config"]
+    assert profiler["profiler"] == "torch"
+    assert profiler["torch_profiler_dir"] == str(tmp_path.resolve())
+    assert profiler["delay_iterations"] == 60
+    assert profiler["max_iterations"] == 20
+    assert profiler["ignore_frontend"] is True
+    assert profiler["torch_profiler_record_shapes"] is True
+    assert overridden.requests == scenario.requests
+    assert "profiler_config" not in scenario.engine
+
+
+@pytest.mark.parametrize(
+    ("delay_iterations", "max_iterations", "message"),
+    [(-1, 20, "delay"), (0, 0, "max")],
+)
+def test_torch_profiler_override_rejects_invalid_window(
+    tmp_path: Path,
+    delay_iterations: int,
+    max_iterations: int,
+    message: str,
+) -> None:
+    scenario = load_scenario(CONFIG_DIRECTORY / "d13_waiting_hol_blocking.json")
+
+    with pytest.raises(ValueError, match=message):
+        override_torch_profiler(
+            scenario,
+            tmp_path,
+            delay_iterations,
+            max_iterations,
+        )
 
 
 @pytest.mark.parametrize(
