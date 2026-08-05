@@ -270,6 +270,15 @@ passing `--scenario-id D15` to `scripts/lab_day14_burst_analyze.py`. The policy
 audit and current no-PR decision are documented in
 `docs/day15_waiting_bypass_pr_audit.md`.
 
+For Day 16, run a one-kernel CUDA smoke before interpreting profiler output.
+The local Nsight Systems path recorded CUDA API calls but no kernel activity,
+so the controlled fallback uses `--torch-profile` with a bounded worker-step
+window. `scripts/lab_day16_profile_analyze.py` aligns execution annotations
+with Scheduler token totals and rejects missing kernel activity. Commands,
+artifacts, results, and the evidence boundary are in
+`docs/day16_nsys_systems_gate.md`; personal review questions are in
+`docs/day16_profiling_acceptance.md`.
+
 ## Scenario intent
 
 | Scenario | Requests | Controlled question |
