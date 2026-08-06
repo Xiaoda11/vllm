@@ -279,6 +279,20 @@ artifacts, results, and the evidence boundary are in
 `docs/day16_nsys_systems_gate.md`; personal review questions are in
 `docs/day16_profiling_acceptance.md`.
 
+Day 17 initially stopped at `ERR_NVGPUCTRPERM`. After explicit user authorization
+and enabling NVIDIA performance-counter access, the minimal CUDA matmul gate and
+a targeted real-vLLM Prefill GEMM collection both succeeded. The measured SM,
+memory, occupancy, and warp-stall counters—and the important limitation that the
+target launch is not yet uniquely aligned to a Scheduler step—are documented in
+`docs/day17_ncu_gate.md`.
+
+The end-to-end engineering narrative, portfolio/resume wording, and interview
+PR Gate are collected in:
+
+- `docs/scheduler_trace_lab_final_report.md`;
+- `docs/scheduler_trace_lab_portfolio.md`;
+- `docs/day20_interview_and_pr_gate.md`.
+
 ## Scenario intent
 
 | Scenario | Requests | Controlled question |
