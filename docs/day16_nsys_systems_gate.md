@@ -167,6 +167,6 @@ Bounded waiting admission 改变的不只是 CPU 队列决策。在观察窗口�
 performance-counter 权限已解决，但允许所有用户访问 counter 会扩大 host 侧的
 信息暴露面；不需要继续采集时可在 NVIDIA Control Panel 中恢复限制。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我把一个有界的 20-step GPU profile 与 Scheduler JSONL 对齐，而不是 profile 整个 server。Strict admission 产生了 20 个单 token Decode step。Bounded admission 产生了 17 个单 Decode step、一个包含 A Decode 和 C 的 1024-token Prefill 的 mixed step，以及两个 dual-Decode step。这个 mixed step 引入了 Tensor Core GEMM，并把 annotated GPU range 从约 30 ms 的 Decode 最大值延长到 143 ms。这说明 Scheduler 策略改变了 batch shape 和 kernel composition，而不是 kernel 代码本身。

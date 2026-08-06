@@ -165,7 +165,7 @@ Trace 直接证明了四种 batch 阶段：仅 A Decode、A-Decode/B-Prefill 混
 如果进行重复 warm runs，B TTFT 近似不变、ITL 尾部随 budget 增大的趋势是否
 仍然成立？还是部分单次运行差异来自冷 Triton JIT、温度或正常运行波动？
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我构造了一个 vLLM v0.26 MRV2 workload：A 是一个 1K prompt、生成 512 tokens
 的请求，在它进入 Decode 后，再加入一个 8K 或 16K Prefill。Scheduler trace

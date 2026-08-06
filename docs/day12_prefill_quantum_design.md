@@ -281,7 +281,7 @@ Day 13 不直接实现 feature flag。先执行 Gate A 和 Gate B，并为重复
 4. eager mode 下的结论在 CUDA Graph 开启后是否仍成立？
 5. Nsight 中，ITL 尾部下降来自哪些 kernel/batch-shape 变化？
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我没有直接新增一个 Prefill quantum，因为 vLLM v0.26 已经有
 `long_prefill_token_threshold`。三次 MRV2 对照显示，2048 阈值把 8192-token

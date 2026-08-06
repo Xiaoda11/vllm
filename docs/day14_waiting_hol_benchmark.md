@@ -170,7 +170,7 @@ burst：
 /home/xiaoda/vllm-lab/outputs/day14-hol-burst-analysis-20260804
 ```
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我先用三次交错重复确认 waiting bypass 将后续 1K 请求 TTFT 从 33.25 秒稳定降到
 182 毫秒，长请求首次调度 step 不变。随后我主动构造 8 个长 Decode 短请求的

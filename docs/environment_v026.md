@@ -169,7 +169,7 @@ cd /home/xiaoda/vllm-lab/vllm
 - OpenAI 服务的优雅关闭；
 - 6 GiB GPU 上的 8K/16K workload。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 vLLM v0.26.0 的 Model Runner V2 需要基于 UVA 的 staged buffers。WSL
 默认关闭 pinned memory，所以我先复现了明确的 UVA 初始化失败。随后我在

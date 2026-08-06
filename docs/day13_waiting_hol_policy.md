@@ -165,7 +165,7 @@ Scheduler 单元测试构造 10-block pool：A 已占用 blocks，B 位于 waiti
   preempted request 需要边界测试；
 - 正式性能结论至少需要 Baseline/Modified 各 3 次交错运行。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我在 1450-block KV 压力 trace 中发现，full-ISL guard 虽然能防止过度接纳，
 但队首 16K 请求放不下时 waiting loop 直接 break，导致后面只需 64 blocks 的

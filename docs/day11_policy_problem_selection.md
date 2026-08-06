@@ -253,7 +253,7 @@ B Prefill: budget - 1 tokens
 3. 最佳 quantum 是否依赖模型、backend 和硬件，以至于只能作为实验性配置？
 4. Nsight 中，尾延迟下降来自 batch shape/kernel 组合变化的哪一部分？
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我先发现 vLLM v0.26 已有全局 `long_prefill_token_threshold`，所以没有重复写
 一个 quantum。我用 MRV2 将 A Decode 加 B=8K Prefill 的 8192-token mixed

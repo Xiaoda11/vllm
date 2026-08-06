@@ -286,12 +286,12 @@ memory, occupancy, and warp-stall counters—and the important limitation that t
 target launch is not yet uniquely aligned to a Scheduler step—are documented in
 `docs/day17_ncu_gate.md`.
 
-The end-to-end engineering narrative, portfolio/resume wording, and interview
-PR Gate are collected in:
+The end-to-end engineering narrative, project overview, and final PR Gate are
+collected in:
 
 - `docs/scheduler_trace_lab_final_report.md`;
-- `docs/scheduler_trace_lab_portfolio.md`;
-- `docs/day20_interview_and_pr_gate.md`.
+- `docs/scheduler_trace_lab_project_overview.md`;
+- `docs/day20_project_review_and_pr_gate.md`.
 
 ## Scenario intent
 

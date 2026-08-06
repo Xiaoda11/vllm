@@ -1,4 +1,12 @@
 <!-- markdownlint-disable MD001 MD041 -->
+
+> **Fork experiment: vLLM v0.26 Scheduler Trace Lab**
+>
+> This branch adds opt-in Scheduler/MRV2 tracing, controlled KV-pressure
+> workloads, a bounded waiting-admission experiment, GPU profiling evidence,
+> and a documented no-PR decision. Start with the
+> [project overview](docs/scheduler_trace_lab_project_overview.md).
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/assets/logos/vllm-logo-text-dark.png">

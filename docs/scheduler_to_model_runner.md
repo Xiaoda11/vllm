@@ -339,7 +339,7 @@ S3 step 5 实测把 A decode 的 1 token 与 B partial prefill 的 2047 tokens
 改变 input buffers 和 metadata，以及不同 KV-cache group 的 backend/layout
 如何改变 block-table tuple，将在 Day 9 处理。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我在 vLLM v0.26 MRV2 增加了 opt-in input-shape trace，只读取 CPU 已有数组
 和 tensor metadata，不做 GPU 回读。8K/16K S3 的 step 5 中，Scheduler 给

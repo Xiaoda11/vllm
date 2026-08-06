@@ -180,7 +180,7 @@ partial prefill 只扩展 table 尾部；Prefix Cache hit 会把已有物理 blo
 未解决问题：KV 容量不足时，running request 的扩容失败、抢占、释放和重算
 能否在固定小容量配置下逐 step 稳定复现。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我在 vLLM v0.26 MRV2 上追通了 Scheduler 到 KV Cache Manager 再到
 BlockPool 的分配链。8K prompt、2048 budget、16-token block 下，四个

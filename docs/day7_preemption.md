@@ -206,7 +206,7 @@ B TTFT 和 A 的 decode 间隔。
 over-admission 三种策略怎样权衡 KV 利用率、waiting latency 与 preemption
 代价，需要后续 benchmark matrix 才能回答。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我用 vLLM v0.26 原生 `num_gpu_blocks_override` 把 KV pool 从 17243 blocks
 缩到 1450，固定 8K decode 请求和 16K prefill 请求。B 在 14329 tokens 时

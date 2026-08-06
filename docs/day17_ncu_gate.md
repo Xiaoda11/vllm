@@ -120,7 +120,7 @@ bounded 的同 step、同 shape NCU 对照，所以不能把上述指标解释�
 - Nsight Systems 在本机 WSL 路径仍未记录 GPU kernel activity；NCU counter 权限
   已解决不等于 Systems timeline 问题也已解决。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我先用单 CUDA matmul 做 Nsight Compute fail-closed Gate。初次 attach 因
 `ERR_NVGPUCTRPERM` 失败；获得明确授权并启用 NVIDIA performance counter 后，

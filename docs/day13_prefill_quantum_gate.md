@@ -112,7 +112,7 @@ deadline 或动态 token budget。
 是否实现该策略，先由 baseline GPU trace 和 Scheduler 单元测试证明：B 失败时
 C 的完整 input 确实能由当时 free blocks 容纳，但 C 因队首 `break` 未被调度。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我没有把已有 long-prefill threshold 包装成新功能。12 次 MRV2 重复实验显示，
 2048 quantum 在 16K mixed workload 将 Decode ITL P95 中位数降低 66.1%，

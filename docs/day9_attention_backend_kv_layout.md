@@ -253,7 +253,7 @@ Day 8 单次运行直接比较。
 未解释问题：相同 workload 在不同独立进程中仍可能发生 Triton JIT，后续若要
 比较 Day 10 的 TTFT/TPOT，需要固定 warmup、缓存状态和运行顺序。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 我在 vLLM v0.26 MRV2 增加了默认关闭的一次性 KV-layout trace。在 RTX 2060
 上，FA2 因 SM 7.5 被排除，实际选择 TRITON_ATTN。Qwen2.5-0.5B 的 24 层形成

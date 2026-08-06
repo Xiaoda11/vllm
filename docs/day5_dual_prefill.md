@@ -167,7 +167,7 @@ Prefill 按全局 budget 分块推进，后到的长 Prefill 不会与它轮转�
 收益是否足以抵消更复杂 batch 的执行代价。这是第 3 周 per-request quantum
 策略候选的直接 baseline。
 
-## 30 秒面试表达
+## 30 秒技术摘要
 
 在 vLLM v0.26 的 8K/16K 双长请求实验中，我用 Scheduler 和 MRV2 JSONL
 证明 `max_num_batched_tokens` 是每 step 的全局 budget。默认 FCFS 下，先到

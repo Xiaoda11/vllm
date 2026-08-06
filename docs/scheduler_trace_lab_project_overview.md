@@ -1,4 +1,34 @@
-# Scheduler Trace Lab：项目展示与简历材料
+# vLLM v0.26 Scheduler Trace Lab
+
+## 从这里开始
+
+这个分支固定在 vLLM v0.26.0，增加了可关闭的 Scheduler/MRV2 trace、精确
+token workload、KV 压力实验、waiting HOL 策略对照和 GPU profiling 证据。
+默认 vLLM 行为在实验开关关闭时保持不变。
+
+```mermaid
+flowchart LR
+    W[Controlled workloads] --> S[Scheduler]
+    S --> K[KV Cache Manager]
+    S --> O[SchedulerOutput]
+    O --> M[MRV2 input preparation]
+    M --> G[TRITON_ATTN and GPU kernels]
+    S -. JSONL .-> A[Trace analyzers]
+    K -. blocks and failures .-> A
+    M -. rows and shapes .-> A
+    G -. profiler and NCU .-> A
+    A --> R[Policy decision and evidence]
+```
+
+| 阅读目标 | 入口 |
+|---|---|
+| 3 分钟了解问题、实现和结果 | 本文 |
+| 阅读完整工程结论 | [完整报告](scheduler_trace_lab_final_report.md) |
+| 运行受控 workload | [复现指南](../benchmarks/scheduler_trace/README.md) |
+| 查看 Scheduler 到 MRV2 数据流 | [数据流报告](scheduler_to_model_runner.md) |
+| 查看策略收益与反例 | [重复实验](day14_waiting_hol_benchmark.md)、[策略审计](day15_waiting_bypass_pr_audit.md) |
+| 查看 GPU profiling | [Scheduler-to-kernel](day16_nsys_systems_gate.md)、[NCU](day17_ncu_gate.md) |
+| 查看最终 PR 决策 | [项目复盘](day20_project_review_and_pr_gate.md) |
 
 ## 一句话定位
 
@@ -22,6 +52,17 @@ allocation 或哪个 MRV2 batch 造成了等待。本项目建立可复现的 tr
 - 默认关闭的 one-admission waiting bypass；
 - Scheduler、workload 和 analyzer 的针对性测试。
 
+### 代码地图
+
+| 范围 | 主要文件 |
+|---|---|
+| Scheduler trace 与 waiting admission | [scheduler.py](../vllm/v1/core/sched/scheduler.py)、[trace.py](../vllm/v1/core/sched/trace.py) |
+| MRV2 batch/input trace | [model_runner.py](../vllm/v1/worker/gpu/model_runner.py) |
+| 配置与 CLI | [scheduler config](../vllm/config/scheduler.py)、[arguments](../vllm/engine/arg_utils.py) |
+| Workload 与分析器 | [workload generator](../scripts/lab_v026_workload.py)、[scripts](../scripts/) |
+| 可复现配置 | [scenario configs](../benchmarks/scheduler_trace/configs/) |
+| 测试 | [lab tests](../tests/lab/)、[Scheduler tests](../tests/v1/core/test_scheduler.py) |
+
 ### 最重要的结果
 
 - 复现真实 HOL witness：B full-ISL allocation failure 时 free blocks 放得下 C，
@@ -39,8 +80,9 @@ allocation 或哪个 MRV2 batch 造成了等待。本项目建立可复现的 tr
 
 ### 最终判断
 
-不提交 upstream PR。一个优秀的系统项目不要求 patch 必须上线；能够用受控反例
-证明局部优化缺少安全边界，并停止继续堆叠 heuristic，同样是工程能力证据。
+不提交 upstream PR。本项目不以 patch 必须上线为验收条件；受控反例证明局部
+优化缺少安全边界，因此停止继续堆叠 heuristic，并保留实现和负结果作为工程
+证据。
 
 ## 快速复现入口
 
@@ -76,7 +118,7 @@ Modified 只增加：
 request timing 和 Scheduler/MRV2 trace。详细复现矩阵见
 `benchmarks/scheduler_trace/README.md`。
 
-## 简历版本
+## 项目摘要版本
 
 ### 两条精简版
 
@@ -94,7 +136,7 @@ request timing 和 Scheduler/MRV2 trace。详细复现矩阵见
 blocking 并实现 bounded bypass，通过 GPU benchmark 与 profiler 证明局部 TTFT
 收益及 preemption/fairness 代价，最终基于反例作出 no-PR 决策。
 
-## 面试证据索引
+## 技术证据索引
 
 | 追问 | 最直接的证据 |
 |---|---|
