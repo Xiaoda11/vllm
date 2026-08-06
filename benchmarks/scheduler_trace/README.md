@@ -276,8 +276,7 @@ so the controlled fallback uses `--torch-profile` with a bounded worker-step
 window. `scripts/lab_day16_profile_analyze.py` aligns execution annotations
 with Scheduler token totals and rejects missing kernel activity. Commands,
 artifacts, results, and the evidence boundary are in
-`docs/day16_nsys_systems_gate.md`; personal review questions are in
-`docs/day16_profiling_acceptance.md`.
+`docs/day16_nsys_systems_gate.md`.
 
 Day 17 initially stopped at `ERR_NVGPUCTRPERM`. After explicit user authorization
 and enabling NVIDIA performance-counter access, the minimal CUDA matmul gate and

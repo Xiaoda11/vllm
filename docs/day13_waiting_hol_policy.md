@@ -164,12 +164,3 @@ Scheduler 单元测试构造 10-block pool：A 已占用 blocks，B 位于 waiti
 - Priority policy、LoRA constraint、encoder input cleanup、KV connector 和
   preempted request 需要边界测试；
 - 正式性能结论至少需要 Baseline/Modified 各 3 次交错运行。
-
-## 30 秒技术摘要
-
-我在 1450-block KV 压力 trace 中发现，full-ISL guard 虽然能防止过度接纳，
-但队首 16K 请求放不下时 waiting loop 直接 break，导致后面只需 64 blocks 的
-1K 请求也等待 33.8 秒。我保留 full-ISL 检查，增加默认关闭的 waiting bypass：
-本 step 暂存失败请求并继续扫描，下一 step 仍优先重试它。GPU trace 中短请求
-从 step 525 提前到 step 71，TTFT 降到 182 ms；长请求调度 step 不变且所有
-请求完成。下一步会用交错重复和 starvation/fairness 边界测试评估代价。

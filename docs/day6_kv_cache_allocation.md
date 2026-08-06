@@ -179,12 +179,3 @@ partial prefill 只扩展 table 尾部；Prefix Cache hit 会把已有物理 blo
 
 未解决问题：KV 容量不足时，running request 的扩容失败、抢占、释放和重算
 能否在固定小容量配置下逐 step 稳定复现。
-
-## 30 秒技术摘要
-
-我在 vLLM v0.26 MRV2 上追通了 Scheduler 到 KV Cache Manager 再到
-BlockPool 的分配链。8K prompt、2048 budget、16-token block 下，四个
-partial-prefill step 各扩展 128 blocks。共享 6K prefix 时，第二个请求命中
-6144 tokens，复用 384 个物理 blocks，只为剩余 2047 tokens 新取 128 blocks。
-我还区分了“加入请求 block table”和“从物理 free pool 新分配”，避免把
-Prefix Cache 复用错误统计成新分配。

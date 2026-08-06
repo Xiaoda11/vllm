@@ -6,7 +6,7 @@ Day 16 通过一条有完整记录的 fallback 路径完成。
 
 - Nsight Systems 2025.6.3 在 vLLM 和最小 PyTorch matmul 上都只记录到了 CUDA API 调用，没有记录 GPU kernel activity。因此，这些报告不能作为 GPU timeline 证据。
 - 显式使用 `--trace=cuda-sw` 得到了相同结果。
-- vLLM 支持的 PyTorch Profiler 能够记录 CUDA kernel。我们分别为 strict 和 bounded waiting admission 采集了 Scheduler step 60-79 的有界窗口。
+- vLLM 支持的 PyTorch Profiler 能够记录 CUDA kernel。实验分别为 strict 和 bounded waiting admission 采集了 Scheduler step 60-79 的有界窗口。
 - 对全部 40 个已 profile 的 step，Scheduler trace 与 profiler annotation 中的 scheduled token 数完全一致。
 
 结果回答了 Day 16 的受控问题：bounded admission 把 C 的 Prefill 插入 A 的 Decode 窗口，因此改变了执行形态和 kernel mix。它没有修改任何单个 kernel 的实现。
@@ -166,7 +166,3 @@ Bounded waiting admission 改变的不只是 CPU 队列决策。在观察窗口�
 能否进一步恢复 Nsight Systems 的 GPU kernel timeline？Nsight Compute 的
 performance-counter 权限已解决，但允许所有用户访问 counter 会扩大 host 侧的
 信息暴露面；不需要继续采集时可在 NVIDIA Control Panel 中恢复限制。
-
-## 30 秒技术摘要
-
-我把一个有界的 20-step GPU profile 与 Scheduler JSONL 对齐，而不是 profile 整个 server。Strict admission 产生了 20 个单 token Decode step。Bounded admission 产生了 17 个单 Decode step、一个包含 A Decode 和 C 的 1024-token Prefill 的 mixed step，以及两个 dual-Decode step。这个 mixed step 引入了 Tensor Core GEMM，并把 annotated GPU range 从约 30 ms 的 Decode 最大值延长到 143 ms。这说明 Scheduler 策略改变了 batch shape 和 kernel composition，而不是 kernel 代码本身。

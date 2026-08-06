@@ -280,13 +280,3 @@ Day 13 不直接实现 feature flag。先执行 Gate A 和 Gate B，并为重复
 3. 多长 Prefill 并发时，阈值改善公平性还是损害总 input throughput？
 4. eager mode 下的结论在 CUDA Graph 开启后是否仍成立？
 5. Nsight 中，ITL 尾部下降来自哪些 kernel/batch-shape 变化？
-
-## 30 秒技术摘要
-
-我没有直接新增一个 Prefill quantum，因为 vLLM v0.26 已经有
-`long_prefill_token_threshold`。三次 MRV2 对照显示，2048 阈值把 8192-token
-mixed batch 拆成四个约 2K 的 batch，Decode 的 Prefill 阶段 ITL P95 中位数
-下降 52.5%，而 Prefill TTFT 和吞吐代价都不到 1%；四次纯 8K Prefill 也没有
-明确退化。因此我的 Day 12 设计是一个 fail-closed code Gate：先测 16K、双长
-Prefill 和 burst，只有全局阈值稳定伤害非混合 workload 且现有配置无法规避，
-才增加 mixed-only feature flag。

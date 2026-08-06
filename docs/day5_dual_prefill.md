@@ -166,13 +166,3 @@ Prefill 按全局 budget 分块推进，后到的长 Prefill 不会与它轮转�
 `long_prefill_token_threshold` 后，两个长 Prefill 是否会公平推进，以及
 收益是否足以抵消更复杂 batch 的执行代价。这是第 3 周 per-request quantum
 策略候选的直接 baseline。
-
-## 30 秒技术摘要
-
-在 vLLM v0.26 的 8K/16K 双长请求实验中，我用 Scheduler 和 MRV2 JSONL
-证明 `max_num_batched_tokens` 是每 step 的全局 budget。默认 FCFS 下，先到
-请求会独占 partial prefill；它完成 Prefill 后，同一 step 才出现 1-token
-Decode 加 `budget-1` 的第二请求 Prefill。九组到达顺序和 budget 实验都没有
-出现两个 partial prefill 同步推进，也没有 KV 压力或 preemption。MRV2 中
-请求 persistent row 在生命周期内稳定，由每 step 的 index mapping 组成实际
-执行 batch。

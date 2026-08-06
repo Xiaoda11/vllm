@@ -252,13 +252,3 @@ B Prefill: budget - 1 tokens
 2. 多个纯 Prefill 并发时，更多 step 是否会降低 input throughput？
 3. 最佳 quantum 是否依赖模型、backend 和硬件，以至于只能作为实验性配置？
 4. Nsight 中，尾延迟下降来自 batch shape/kernel 组合变化的哪一部分？
-
-## 30 秒技术摘要
-
-我先发现 vLLM v0.26 已有全局 `long_prefill_token_threshold`，所以没有重复写
-一个 quantum。我用 MRV2 将 A Decode 加 B=8K Prefill 的 8192-token mixed
-batch，与 threshold=2048 的四个 2049-token mixed batches 做了三次重复。
-阈值让 A 在 Prefill 阶段的 ITL P95 中位数下降 52.5%，B TTFT 只增加 0.7%，
-吞吐变化约 -0.1%；四次纯 8K Prefill 对照也没看到明确退化。因此当前工程
-判断是复用现有配置并扩大边界测试，而不是为完成 patch 制造重复 Scheduler
-逻辑。

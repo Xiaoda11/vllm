@@ -22,7 +22,7 @@ flowchart LR
 
 | 阅读目标 | 入口 |
 |---|---|
-| 3 分钟了解问题、实现和结果 | 本文 |
+| 快速了解问题、实现和结果 | 本文 |
 | 阅读完整工程结论 | [完整报告](scheduler_trace_lab_final_report.md) |
 | 运行受控 workload | [复现指南](../benchmarks/scheduler_trace/README.md) |
 | 查看 Scheduler 到 MRV2 数据流 | [数据流报告](scheduler_to_model_runner.md) |
@@ -30,17 +30,11 @@ flowchart LR
 | 查看 GPU profiling | [Scheduler-to-kernel](day16_nsys_systems_gate.md)、[NCU](day17_ncu_gate.md) |
 | 查看最终 PR 决策 | [项目复盘](day20_project_review_and_pr_gate.md) |
 
-## 一句话定位
-
-这是一个以真实 workload 驱动的 vLLM v0.26/MRV2 Scheduler 二次开发项目：
-从逐 step 可观测性出发，定位 waiting HOL blocking，实现并验证 bounded bypass，
-最后用反例否决不安全的发布方案。
-
-## 展示页摘要
+## 工程摘要
 
 ### 为什么做
 
-请求级 TTFT/TPOT 只能告诉我们“慢了”，不能回答哪个 Scheduler step、哪次 KV
+请求级 TTFT/TPOT 只能表明延迟变化，不能回答哪个 Scheduler step、哪次 KV
 allocation 或哪个 MRV2 batch 造成了等待。本项目建立可复现的 trace，让调度
 决策、KV 状态、MRV2 input shape 和 GPU 工作组成可以在同一个证据链中解释。
 
@@ -118,27 +112,9 @@ Modified 只增加：
 request timing 和 Scheduler/MRV2 trace。详细复现矩阵见
 `benchmarks/scheduler_trace/README.md`。
 
-## 项目摘要版本
-
-### 两条精简版
-
-- 基于 vLLM v0.26/MRV2 实现默认关闭的逐 step Scheduler Trace，对齐 token
-  budget、KV allocation/preemption、persistent row 与 GPU input shape，并构建
-  8K/16K Prefill、Decode/Prefill interleaving 等可复现 workload。
-- 定位 KV 压力下 waiting HOL blocking 并实现 bounded bypass；重复实验将目标
-  短请求 TTFT median 从 33.250 s 降至 0.182 s，同时以长生命周期 burst 的
-  3 次 preemption 和公平性/吞吐退化否决 upstream PR，形成完整的收益—风险
-  工程结论。
-
-### 一条超短版
-
-基于 vLLM v0.26/MRV2 构建 Scheduler–KV–Model Runner trace，定位 waiting HOL
-blocking 并实现 bounded bypass，通过 GPU benchmark 与 profiler 证明局部 TTFT
-收益及 preemption/fairness 代价，最终基于反例作出 no-PR 决策。
-
 ## 技术证据索引
 
-| 追问 | 最直接的证据 |
+| 工程问题 | 最直接的证据 |
 |---|---|
 | MRV2 在 WSL 怎么跑通 | `docs/environment_v026.md` |
 | Trace 如何避免同步 | `docs/day4_scheduler_trace.md` |
@@ -150,14 +126,14 @@ blocking 并实现 bounded bypass，通过 GPU benchmark 与 profiler 证明局�
 | bounded 为什么仍不安全 | `docs/day15_waiting_bypass_pr_audit.md` |
 | 调度如何影响 GPU 工作 | `docs/day16_nsys_systems_gate.md` |
 | NCU 单 kernel 说明什么 | `docs/day17_ncu_gate.md` |
-| 完整项目叙事 | `docs/scheduler_trace_lab_final_report.md` |
+| 完整工程报告 | `docs/scheduler_trace_lab_final_report.md` |
 
-## 展示时必须避免的表述
+## 证据边界
 
-- 不说“优化了 vLLM 99%”；只说目标 C 在特定三请求 Gate 中的 TTFT 变化。
-- 不把一次 burst 或 profiler window 描述成稳定性能结论。
-- 不说运行了 FlashAttention；实测 backend 是 `TRITON_ATTN`。
-- 不把 Scheduler logical step 当成 GPU kernel 时间戳。
-- 不说 bounded 策略解决了 starvation；证据恰好说明它没有可靠的生命周期上界。
-- 不把单个 NCU launch 外推成整个 Prefill 的 memory/compute-bound 结论，也不在
-  grid 尚未对齐时归因给具体 Scheduler step 或策略。
+- 目标 C 的 TTFT 变化只适用于特定三请求 Gate，不代表 vLLM 的普遍加速比例。
+- 单次 burst 或 profiler window 不构成稳定性能结论。
+- 实测 backend 是 `TRITON_ATTN`，不是 FlashAttention。
+- Scheduler logical step 不是 GPU kernel 时间戳。
+- bounded 策略没有解决 starvation，也没有可靠的生命周期上界。
+- 单个 NCU launch 不能外推整个 Prefill 的 memory/compute-bound 属性；grid 尚未
+  对齐时也不能归因给具体 Scheduler step 或策略。

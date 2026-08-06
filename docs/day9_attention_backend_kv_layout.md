@@ -252,26 +252,3 @@ Day 8 单次运行直接比较。
 
 未解释问题：相同 workload 在不同独立进程中仍可能发生 Triton JIT，后续若要
 比较 Day 10 的 TTFT/TPOT，需要固定 warmup、缓存状态和运行顺序。
-
-## 30 秒技术摘要
-
-我在 vLLM v0.26 MRV2 增加了默认关闭的一次性 KV-layout trace。在 RTX 2060
-上，FA2 因 SM 7.5 被排除，实际选择 TRITON_ATTN。Qwen2.5-0.5B 的 24 层形成
-一个 FullAttention KV group，逻辑 cache shape 是
-`[17243,2,16,128]`，K/V 合并在最后的 content dimension；stride
-`[4096,128,256,1]` 证明物理布局是 NHD。用 block 数、page bytes 和层数反算
-得到 3.157 GiB、275,888 tokens，与启动日志一致，且 trace 没有读取 GPU
-tensor 内容或引入同步。
-
-## 个人验收题
-
-1. 为什么本机自动选择 `TRITON_ATTN`，而不是 FA2？
-2. `backend_per_kind` 与全局 backend 的优先关系是什么？
-3. 为什么 HF config 有 `sliding_window`，运行时 spec 却是 full attention？
-4. `[17243,2,16,128]` 四个维度分别是什么？
-5. 为什么 head size 是 64，而 content dimension 是 128？
-6. shape 和 stride 分别证明什么？怎样由 stride 看出 NHD？
-7. 怎样从 8,192 page bytes 反算 3.157 GiB 和 275,888 tokens？
-8. block table、slot mapping 和 KV tensor 的职责边界是什么？
-9. v0.15 到 v0.26 的 layout 变化为什么不等于容量翻倍？
-10. 为什么本次请求延迟不能作为 backend 性能结论？

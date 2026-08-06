@@ -205,13 +205,3 @@ B TTFT 和 A 的 decode 间隔。
 未解决问题：在更大并发下，默认 full-ISL guard、watermark 和允许
 over-admission 三种策略怎样权衡 KV 利用率、waiting latency 与 preemption
 代价，需要后续 benchmark matrix 才能回答。
-
-## 30 秒技术摘要
-
-我用 vLLM v0.26 原生 `num_gpu_blocks_override` 把 KV pool 从 17243 blocks
-缩到 1450，固定 8K decode 请求和 16K prefill 请求。B 在 14329 tokens 时
-扩容需要 128 blocks，但只剩 40，于是 `allocate_slots` 返回失败，FCFS 将
-队尾 B 自身抢占，释放 896 blocks、computed tokens 清零并从 waiting 重跑。
-同一点发生两次，累计重算 28658 tokens。B 的 TTFT 从 27 秒升到 61 秒；而
-v0.26 默认 full-ISL guard 会提前阻止过度接纳，所以默认配置下表现为 waiting
-而不是 preemption。

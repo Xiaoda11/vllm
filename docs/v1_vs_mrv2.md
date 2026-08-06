@@ -305,33 +305,6 @@ v0.26 实测分支：MRV2 + TRITON_ATTN
 的 runner 对比，需要在 v0.26 内控制 MRV1/MRV2 实验，并保持模型、backend、
 workload、内存配置和机器状态一致。
 
-## 5 分钟口述
-
-vLLM 的外层循环仍然是 Scheduler 调度、non-blocking 模型执行，再使用输出
-更新 Scheduler。MRV2 的关键变化在于 model runner 如何存储和准备 request
-state。
-
-V1 包含两个耦合层：Python `CachedRequestState` 备份，以及 rows 同时作为
-直接模型输入的 `InputBatch`。当 request 暂时不出现在某一步时，V1 会移除
-rows，之后再重新加入、压紧空洞并刷新 metadata。异步调度下，这种设计需要
-额外保护 row 移动和 CPU/GPU buffer 生命周期。
-
-MRV2 为每个 active request 分配固定 row。Token history、lengths 和
-computed-token progress 保存在 persistent GPU 或 UVA-backed state 中。
-Request 可以按任意顺序执行，因为每一步都会创建 `idx_mapping`，把紧凑
-batch 顺序映射回 persistent rows。GPU kernels 再根据该映射准备 input IDs、
-positions、sequence lengths 和 gather 后的 block tables。
-
-增量变化通过 `StagedWriteTensor` 处理：CPU 只记录发生变化的 rows，GPU
-kernel 再应用这些 diffs。UVA 既用于提供少量 write metadata，也可以承载
-很大的 token-history state。为了保持 async-safe，pinned/UVA buffers 的
-pool 深度至少覆盖 in-flight batch 数，因此 CPU 准备 step N+1 时不会覆盖
-GPU step N 正在读取的 buffer。
-
-实现 Scheduler Trace 时，我会在 CPU 侧记录 Scheduler decisions，不调用
-`.item()`，也不引入同步。Persistent row 和 index mapping 证据将作为可选
-的 MRV2-side 扩展，不会与 Scheduler policy 的结论混为一谈。
-
 ## 留给后续阶段的问题
 
 - 哪些 row/index 字段可以在不增加 worker RPC 或 synchronization 的情况下

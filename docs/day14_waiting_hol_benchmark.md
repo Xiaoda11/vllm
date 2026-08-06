@@ -169,12 +169,3 @@ burst：
 /home/xiaoda/vllm-lab/outputs/day14-hol-burst-modified-20260804
 /home/xiaoda/vllm-lab/outputs/day14-hol-burst-analysis-20260804
 ```
-
-## 30 秒技术摘要
-
-我先用三次交错重复确认 waiting bypass 将后续 1K 请求 TTFT 从 33.25 秒稳定降到
-182 毫秒，长请求首次调度 step 不变。随后我主动构造 8 个长 Decode 短请求的
-公平性反例：短请求 TTFT 中位数降到 706 毫秒、makespan 降低 20%，但它们持有
-KV 后把队首 16K 请求推迟 70 steps，TTFT 增加 10%。因此我没有急着提 PR，而是
-把当前实现保留为 baseline，下一版增加 bypass count/age bound。这体现了调度策略
-不能只看短请求收益，还必须验证 admission 决策对长请求公平性的代价。

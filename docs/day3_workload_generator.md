@@ -114,23 +114,3 @@ canonical S4 性能数据。
 未解释问题：S3 中 B 的 TTFT 明显晚于 A，究竟对应怎样的 waiting/running
 变化、每 step token budget 分配和 KV block 分配，必须由 Day 4 Trace
 回答，不能从本日 timing 反推。
-
-## 30 秒表达
-
-我先用预分词 token ID 构建了 vLLM 的可控 workload，精确控制
-prompt/output 长度、arrival time、并发、request ID 和共享前缀。请求通过
-AsyncLLM 独立提交，每次实验保存 commit、dirty 状态、命令、prompt 摘要
-和 TTFT/E2E。canonical 8K/16K 双请求已在 RTX 2060 的 MRV2 路径跑通；
-但 request timing 只能证明输入和外部延迟，内部 token budget、KV 分配和
-调度顺序要靠下一步逐 step trace。
-
-## 个人验收
-
-进入 Day 4 前，本人需要不看本文回答：
-
-1. 为什么不用两个自然语言字符串声称它们是 8K/16K？
-2. `concurrency=2` 和两个请求同时到达分别控制什么？
-3. 为什么 CSV 中同时保存 planned arrival 和 submitted time？
-4. S3 的 timing 能证明什么，不能证明什么？
-5. `--prompt-scale 0.5` 后，哪些结论仍成立，哪些不能沿用？
-6. S6 如何证明共享的是 token prefix，而不是相似文本？

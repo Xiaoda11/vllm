@@ -164,14 +164,3 @@ Trace 直接证明了四种 batch 阶段：仅 A Decode、A-Decode/B-Prefill 混
 
 如果进行重复 warm runs，B TTFT 近似不变、ITL 尾部随 budget 增大的趋势是否
 仍然成立？还是部分单次运行差异来自冷 Triton JIT、温度或正常运行波动？
-
-## 30 秒技术摘要
-
-我构造了一个 vLLM v0.26 MRV2 workload：A 是一个 1K prompt、生成 512 tokens
-的请求，在它进入 Decode 后，再加入一个 8K 或 16K Prefill。Scheduler trace
-显示，每个混合 step 会先给 A 分配 1 个 Decode token，再把剩余全局 budget
-分给 Prefill。例如 budget 为 4096 时，MRV2 batch 是 `[1,4095]`，对应
-`query_start_loc=[0,1,4096]`。增大 budget 会减少 Prefill chunk 数，但会给
-Decode 请求造成次数更少、持续时间更长的 ITL 停顿，而 B 的单次运行 TTFT
-近似不变。这说明平均 TPOT 会掩盖尾部延迟，也为下一步从 ITL 证据选择调度
-策略提供了依据。

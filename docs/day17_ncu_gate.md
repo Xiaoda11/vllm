@@ -119,13 +119,3 @@ bounded 的同 step、同 shape NCU 对照，所以不能把上述指标解释�
   不同。没有 NVTX/launch-config 过滤前，精确 step 归属保持未决。
 - Nsight Systems 在本机 WSL 路径仍未记录 GPU kernel activity；NCU counter 权限
   已解决不等于 Systems timeline 问题也已解决。
-
-## 30 秒技术摘要
-
-我先用单 CUDA matmul 做 Nsight Compute fail-closed Gate。初次 attach 因
-`ERR_NVGPUCTRPERM` 失败；获得明确授权并启用 NVIDIA performance counter 后，
-同一 Gate 成功。真实 vLLM Prefill GEMM 的 achieved occupancy 约 24.7%，每线程
-使用 254 个寄存器，主要 stall 是约 61.9% 的 math-pipe throttle，而 long
-scoreboard 只有约 1.4%，所以它不是简单的 DRAM-latency-bound 现象。不过这只是
-一个 targeted launch，不能替代端到端 benchmark，也不能在没有 step 对齐时归因
-给具体 Scheduler 策略。

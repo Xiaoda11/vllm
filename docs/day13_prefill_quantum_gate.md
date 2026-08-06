@@ -111,12 +111,3 @@ deadline 或动态 token budget。
 
 是否实现该策略，先由 baseline GPU trace 和 Scheduler 单元测试证明：B 失败时
 C 的完整 input 确实能由当时 free blocks 容纳，但 C 因队首 `break` 未被调度。
-
-## 30 秒技术摘要
-
-我没有把已有 long-prefill threshold 包装成新功能。12 次 MRV2 重复实验显示，
-2048 quantum 在 16K mixed workload 将 Decode ITL P95 中位数降低 66.1%，
-纯 16K Prefill 的 TTFT/E2E 只退化约 0.3%–0.4%，所以预注册的新代码 Gate
-没有触发。我终止了这条配置调参路线，转而从 KV 压力 trace 定位到真正的
-Scheduler 控制流问题：full-ISL 检查让队首长请求失败后直接 break，可能阻塞
-后面能放下的短请求。下一步用三请求和 1450-block KV pool 验证这个 HOL 问题。

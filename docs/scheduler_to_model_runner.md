@@ -338,14 +338,3 @@ S3 step 5 实测把 A decode 的 1 token 与 B partial prefill 的 2047 tokens
 未解决问题：CUDA Graph 开启后 `R_padded/T_padded` 的 shape bucket 如何
 改变 input buffers 和 metadata，以及不同 KV-cache group 的 backend/layout
 如何改变 block-table tuple，将在 Day 9 处理。
-
-## 30 秒技术摘要
-
-我在 vLLM v0.26 MRV2 增加了 opt-in input-shape trace，只读取 CPU 已有数组
-和 tensor metadata，不做 GPU 回读。8K/16K S3 的 step 5 中，Scheduler 给
-A decode 1 token、给 B prefill 2047 tokens；执行顺序是 A/B，但它们的
-persistent rows 是 1/0，所以 `idx_mapping=[1,0]`。随后得到
-`query_start_loc=[0,1,2048]`、2048 个 input IDs/positions、两行 gathered
-block table 和 `[1,2048]` slot mapping，24 层 attention metadata 都是
-Triton 类型。这证明 MRV2 把 request-lifetime state 与 per-step batch layout
-解耦。
