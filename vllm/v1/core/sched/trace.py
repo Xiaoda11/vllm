@@ -3,21 +3,20 @@
 
 """Opt-in JSONL tracing helpers for the Scheduler Trace Lab.
 
-This module is intentionally independent from GPU execution. It records only
-objects supplied by scheduler/model-runner instrumentation and performs file IO
-on a background thread.
+This module is intentionally independent from GPU execution and heavyweight
+vLLM imports. It records only objects supplied by scheduler/model-runner
+instrumentation and performs file IO on a background thread.
 """
 
 import json
+import logging
 import os
 import queue
 import threading
 from pathlib import Path
 from typing import Any
 
-from vllm.logger import init_logger
-
-logger = init_logger(__name__)
+logger = logging.getLogger(__name__)
 
 TRACE_SCHEMA_VERSION = 1
 SCHEDULER_TRACE_PATH_ENV = "VLLM_LAB_SCHEDULER_TRACE_PATH"
