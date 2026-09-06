@@ -1,9 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib.util
 import json
 from pathlib import Path
+from types import ModuleType
 
-from vllm.v1.core.sched.trace import JsonlTraceWriter, TRACE_SCHEMA_VERSION
+
+def _load_trace_module() -> ModuleType:
+    trace_path = (
+        Path(__file__).parents[3] / "vllm" / "v1" / "core" / "sched" / "trace.py"
+    )
+    spec = importlib.util.spec_from_file_location("scheduler_trace_lab_trace", trace_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+trace = _load_trace_module()
+JsonlTraceWriter = trace.JsonlTraceWriter
+TRACE_SCHEMA_VERSION = trace.TRACE_SCHEMA_VERSION
 
 
 def test_jsonl_trace_writer_adds_schema_version(tmp_path: Path) -> None:
