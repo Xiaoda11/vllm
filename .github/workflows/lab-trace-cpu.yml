@@ -9,7 +9,11 @@ on:
       - "exp/mrv2-scheduler-trace-v028"
     paths:
       - "vllm/v1/core/sched/trace.py"
+      - "vllm/v1/core/sched/trace_event.py"
+      - "vllm/v1/core/sched/scheduler.py"
       - "lab_tests/test_trace_writer.py"
+      - "lab_tests/test_scheduler_trace_event.py"
+      - "lab_tests/test_scheduler_trace_integration.py"
       - ".github/workflows/lab-trace-cpu.yml"
   workflow_dispatch:
 
@@ -30,5 +34,9 @@ jobs:
       - name: Install minimal test dependency
         run: python -m pip install --disable-pip-version-check pytest
 
-      - name: Run isolated Trace utility contracts
-        run: python -m pytest -q lab_tests/test_trace_writer.py
+      - name: Run isolated Trace CPU contracts
+        run: >-
+          python -m pytest -q
+          lab_tests/test_trace_writer.py
+          lab_tests/test_scheduler_trace_event.py
+          lab_tests/test_scheduler_trace_integration.py
