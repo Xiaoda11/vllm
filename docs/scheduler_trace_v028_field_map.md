@@ -24,9 +24,9 @@ The old instrumentation must not be copied mechanically because v0.28 adds a sec
 | running queue | `Scheduler.running` | same | stable |
 | waiting queue | `Scheduler.waiting` | same | stable |
 | skipped waiting queue | `Scheduler.skipped_waiting` | same | stable |
-| KV usage | `KVCacheManager.usage` | same scheduler-side manager | stable, integration test pending |
-| free KV blocks | block pool free count | block pool free count | stable, integration test pending |
-| request block ids | KV cache manager lookup | KV cache manager lookup | stable, integration test pending |
+| KV usage | `KVCacheManager.usage` | same scheduler-side manager | wired, CPU contract covered |
+| free KV blocks | block pool free count | block pool free count | wired, CPU contract covered |
+| request block ids | KV cache manager lookup | KV cache manager lookup | wired, CPU contract covered |
 | preempted ids | `SchedulerOutput.preempted_req_ids` | same output field | stable |
 | finished ids | `SchedulerOutput.finished_req_ids` | same output field | stable |
 | token budget | `max_num_scheduled_tokens` / remaining budget | same compute-token budget | stable |
@@ -49,14 +49,22 @@ Preemption events should also record whether stale in-flight output must be drop
 
 ## Port order
 
-1. Wire `create_scheduler_trace_writer()` into Scheduler construction.
-2. Restore before/after queue + request snapshots using v0.28 state.
-3. Emit successful scheduling decisions from `SchedulerOutput`.
-4. Add v0.28 `input_budget` to the step event.
-5. Instrument running-flow `allocate_slots() -> None` and preemption.
-6. Instrument waiting-flow allocation failures and prefix-cache information.
-7. Add CPU semantic tests around pure event construction before attempting a full Scheduler fixture.
+Completed in the CPU integration slice:
+
+1. Wired `create_scheduler_trace_writer()` into Scheduler construction and shutdown.
+2. Restored before/after queue + request snapshots using v0.28 state.
+3. Emitted successful scheduling decisions from `SchedulerOutput`.
+4. Added the v0.28 `input_budget` to the live step event.
+5. Instrumented running-flow allocation failures and KV-delivery-aware preemption.
+6. Instrumented waiting-flow allocation failures and admitted prefix-cache hits.
+7. Added isolated CPU contracts for the live Scheduler snapshot/event methods.
+
+The remaining validation step is an end-to-end Scheduler or GPU workload that
+exercises the opt-in JSONL path under real model execution.
 
 ## Validation boundary
 
-A green utility CI proves JSONL/schema/writer behavior only. Until a real Scheduler test or GPU workload runs, KV-manager lookups and end-to-end scheduler instrumentation remain migration code under validation, not experimental evidence.
+A green CPU CI now proves JSONL/schema/writer behavior plus the live Scheduler
+snapshot/event methods against lightweight v0.28 state doubles. Until a real
+Scheduler fixture or GPU workload runs, end-to-end scheduling and trace overhead
+remain migration code under validation, not experimental evidence.

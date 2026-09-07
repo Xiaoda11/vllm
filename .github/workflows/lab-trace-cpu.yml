@@ -10,8 +10,10 @@ on:
     paths:
       - "vllm/v1/core/sched/trace.py"
       - "vllm/v1/core/sched/trace_event.py"
+      - "vllm/v1/core/sched/scheduler.py"
       - "lab_tests/test_trace_writer.py"
       - "lab_tests/test_scheduler_trace_event.py"
+      - "lab_tests/test_scheduler_trace_integration.py"
       - ".github/workflows/lab-trace-cpu.yml"
   workflow_dispatch:
 
@@ -37,3 +39,4 @@ jobs:
           python -m pytest -q
           lab_tests/test_trace_writer.py
           lab_tests/test_scheduler_trace_event.py
+          lab_tests/test_scheduler_trace_integration.py

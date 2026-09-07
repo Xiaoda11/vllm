@@ -6,7 +6,9 @@ from types import ModuleType
 
 
 def _load_event_module() -> ModuleType:
-    path = Path(__file__).parents[1] / "vllm" / "v1" / "core" / "sched" / "trace_event.py"
+    path = (
+        Path(__file__).parents[1] / "vllm" / "v1" / "core" / "sched" / "trace_event.py"
+    )
     spec = importlib.util.spec_from_file_location("scheduler_trace_lab_event", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

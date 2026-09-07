@@ -51,6 +51,8 @@ from vllm.v1.core.sched.request_queue import (
     SchedulingPolicy,
     create_request_queue,
 )
+from vllm.v1.core.sched.trace import create_scheduler_trace_writer
+from vllm.v1.core.sched.trace_event import make_scheduler_step_event
 from vllm.v1.core.sched.utils import check_stop, remove_all
 from vllm.v1.engine import EngineCoreEventType, EngineCoreOutput, EngineCoreOutputs
 from vllm.v1.kv_cache_interface import KVCacheConfig
@@ -300,6 +302,7 @@ class Scheduler(SchedulerInterface):
         # Scheduler iteration counter. Drives the V2+PP+async decode-throttle
         # cadence (`next_decode_eligible_step`).
         self.current_step = 0
+        self.scheduler_trace_writer = create_scheduler_trace_writer()
         # DP prefill balancing: Flag to track whether the last cadence-aligned
         # prefill batch fully drained the waiting queue. Prefill throttling
         # is disabled in this case.
@@ -475,6 +478,12 @@ class Scheduler(SchedulerInterface):
 
     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         self.current_step += 1
+        trace_writer = self.scheduler_trace_writer
+        trace_before = (
+            self._make_scheduler_trace_snapshot() if trace_writer is not None else None
+        )
+        trace_prefix_cached_tokens = {} if trace_writer is not None else None
+        trace_allocation_failures = [] if trace_writer is not None else None
         # NOTE(woosuk) on the scheduling algorithm:
         # There's no "decoding phase" nor "prefill phase" in the scheduler.
         # Each request just has the num_computed_tokens and
@@ -500,6 +509,8 @@ class Scheduler(SchedulerInterface):
         if self._pause_state == PauseState.PAUSED_ALL:
             # Do not schedule any requests when paused.
             token_budget = 0
+        trace_token_budget_initial = token_budget
+        trace_input_budget_initial = input_budget
 
         # Encoder-related.
         scheduled_encoder_inputs: dict[str, list[int]] = {}
@@ -639,6 +650,18 @@ class Scheduler(SchedulerInterface):
                         break
 
                     # The request cannot be scheduled.
+                    trace_failure = None
+                    if trace_allocation_failures is not None:
+                        trace_failure = self._make_scheduler_trace_allocation_failure(
+                            phase="running",
+                            request_id=request.request_id,
+                            num_new_tokens=num_new_tokens,
+                            num_computed_tokens=request.num_computed_tokens,
+                            token_budget_remaining=token_budget,
+                            input_budget_remaining=input_budget,
+                        )
+                        trace_allocation_failures.append(trace_failure)
+
                     # Preempt the lowest-priority request.
                     if self.policy == SchedulingPolicy.PRIORITY:
                         preempted_req = max(
@@ -677,6 +700,11 @@ class Scheduler(SchedulerInterface):
                     else:
                         preempted_req = self.running.pop()
 
+                    if trace_failure is not None:
+                        trace_failure["preempted_request_id"] = preempted_req.request_id
+                        trace_failure["preempted_num_computed_tokens"] = (
+                            preempted_req.num_computed_tokens
+                        )
                     self._preempt_request(
                         preempted_req,
                         scheduled_timestamp,
@@ -1046,6 +1074,17 @@ class Scheduler(SchedulerInterface):
 
                 if new_blocks is None:
                     # The request cannot be scheduled.
+                    if trace_allocation_failures is not None:
+                        trace_allocation_failures.append(
+                            self._make_scheduler_trace_allocation_failure(
+                                phase="waiting",
+                                request_id=request.request_id,
+                                num_new_tokens=num_new_tokens,
+                                num_computed_tokens=num_computed_tokens,
+                                token_budget_remaining=token_budget,
+                                input_budget_remaining=input_budget,
+                            )
+                        )
 
                     # NOTE: we need to untouch the request from the encode cache
                     # manager
@@ -1078,6 +1117,10 @@ class Scheduler(SchedulerInterface):
                     self.kv_cache_manager.record_prefix_cache_stats(
                         request, num_new_local_computed_tokens
                     )
+                    if trace_prefix_cached_tokens is not None:
+                        trace_prefix_cached_tokens[request_id] = (
+                            num_new_local_computed_tokens
+                        )
 
                 request = request_queue.pop_request()
                 if load_kv_async:
@@ -1312,7 +1355,107 @@ class Scheduler(SchedulerInterface):
 
         with record_function_or_nullcontext("schedule: update_after_schedule"):
             self._update_after_schedule(scheduler_output)
+        if trace_writer is not None:
+            assert trace_before is not None
+            assert trace_prefix_cached_tokens is not None
+            assert trace_allocation_failures is not None
+            trace_writer.record(
+                self._make_scheduler_trace_event(
+                    before=trace_before,
+                    scheduler_output=scheduler_output,
+                    token_budget_initial=trace_token_budget_initial,
+                    token_budget_remaining=token_budget,
+                    input_budget_initial=trace_input_budget_initial,
+                    input_budget_remaining=input_budget,
+                    prefix_cached_tokens=trace_prefix_cached_tokens,
+                    allocation_failures=trace_allocation_failures,
+                )
+            )
         return scheduler_output
+
+    def _make_scheduler_trace_snapshot(self) -> dict[str, Any]:
+        request_states = {
+            request_id: self._make_scheduler_trace_request_state(request)
+            for request_id, request in self.requests.items()
+        }
+        return {
+            "running": [request.request_id for request in self.running],
+            "waiting": [request.request_id for request in self.waiting],
+            "skipped_waiting": [request.request_id for request in self.skipped_waiting],
+            "requests": request_states,
+            "kv_cache_usage": self.kv_cache_manager.usage,
+            "num_free_blocks": (self.kv_cache_manager.block_pool.get_num_free_blocks()),
+        }
+
+    def _make_scheduler_trace_request_state(self, request: Request) -> dict[str, Any]:
+        try:
+            block_ids = self.kv_cache_manager.get_block_ids(request.request_id)
+        except KeyError:
+            block_ids = tuple()
+        return {
+            "status": request.status.name,
+            "num_prompt_tokens": request.num_prompt_tokens,
+            "num_output_tokens": len(request.output_token_ids),
+            "num_computed_tokens": request.num_computed_tokens,
+            "num_in_flight_tokens": request.num_in_flight_tokens,
+            "num_processed_tokens": max(
+                0, request.num_computed_tokens - request.num_in_flight_tokens
+            ),
+            "is_prefill_chunk": request.is_prefill_chunk,
+            "block_ids": [list(group) for group in block_ids],
+        }
+
+    def _make_scheduler_trace_allocation_failure(
+        self,
+        *,
+        phase: str,
+        request_id: str,
+        num_new_tokens: int,
+        num_computed_tokens: int,
+        token_budget_remaining: int,
+        input_budget_remaining: int,
+    ) -> dict[str, Any]:
+        return {
+            "phase": phase,
+            "request_id": request_id,
+            "num_new_tokens": num_new_tokens,
+            "num_computed_tokens": num_computed_tokens,
+            "num_free_blocks": (self.kv_cache_manager.block_pool.get_num_free_blocks()),
+            "token_budget_remaining": token_budget_remaining,
+            "input_budget_remaining": input_budget_remaining,
+            "requires_kv_delivery": self.requires_kv_delivery,
+            "preempted_request_id": None,
+            "preempted_num_computed_tokens": None,
+        }
+
+    def _make_scheduler_trace_event(
+        self,
+        *,
+        before: dict[str, Any],
+        scheduler_output: SchedulerOutput,
+        token_budget_initial: int,
+        token_budget_remaining: int,
+        input_budget_initial: int,
+        input_budget_remaining: int,
+        prefix_cached_tokens: dict[str, int],
+        allocation_failures: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return make_scheduler_step_event(
+            step_id=self.current_step,
+            before=before,
+            after=self._make_scheduler_trace_snapshot(),
+            num_scheduled_tokens=scheduler_output.num_scheduled_tokens,
+            total_num_scheduled_tokens=(scheduler_output.total_num_scheduled_tokens),
+            finished_req_ids=scheduler_output.finished_req_ids,
+            preempted_req_ids=scheduler_output.preempted_req_ids,
+            token_budget_initial=token_budget_initial,
+            token_budget_remaining=token_budget_remaining,
+            input_budget_initial=input_budget_initial,
+            input_budget_remaining=input_budget_remaining,
+            block_size=self.block_size,
+            prefix_cached_tokens=prefix_cached_tokens,
+            allocation_failures=allocation_failures,
+        )
 
     def _build_kv_connector_meta(
         self, connector: KVConnectorBase_V1, scheduler_output: SchedulerOutput
@@ -2639,6 +2782,8 @@ class Scheduler(SchedulerInterface):
 
     def shutdown(self) -> None:
         logger.debug_once("[shutdown] Scheduler: start")
+        if self.scheduler_trace_writer is not None:
+            self.scheduler_trace_writer.close()
         if self.kv_event_publisher:
             self.kv_event_publisher.shutdown()
         if self.connector is not None:
