@@ -23,8 +23,12 @@ jobs:
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Install CPU test environment
         run: |
-          uv pip install -r requirements/build/cpu.txt --index-strategy unsafe-best-match
-          uv pip install -r requirements/test/cpu.txt --index-strategy unsafe-best-match
+          uv pip install -r requirements/build/cpu.txt \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            --index-strategy unsafe-best-match
+          uv pip install -r requirements/test/cpu.txt \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            --index-strategy unsafe-best-match
           uv pip install -e . --no-build-isolation
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: 2
