@@ -26,6 +26,18 @@ jobs:
           uv pip install -r requirements/cpu.txt \
             --extra-index-url https://download.pytorch.org/whl/cpu \
             --index-strategy unsafe-best-match
+      - name: Adapt PR patch to current waiting-queue names
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("vllm/v1/core/sched/scheduler.py")
+          text = path.read_text()
+          old = """                    request = self.waiting.pop_request()\n                    skipped_waiting_requests.prepend_request(request)\n                    continue\n"""
+          new = """                    request = request_queue.pop_request()\n                    step_skipped_waiting.prepend_request(request)\n                    continue\n"""
+          assert text.count(old) == 1, "expected the #33499 allocation-failure hunk once"
+          path.write_text(text.replace(old, new))
+          PY
       - name: Run deterministic scheduler cases directly
         env:
           PYTHONPATH: ${{ github.workspace }}
