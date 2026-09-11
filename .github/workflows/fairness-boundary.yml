@@ -1,0 +1,37 @@
+name: Fairness boundary CPU test
+
+on:
+  push:
+    branches:
+      - test/pr33499-fairness-boundary
+
+permissions:
+  contents: read
+
+jobs:
+  fairness-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - name: Create venv
+        run: |
+          uv venv
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install CPU test environment
+        run: |
+          uv pip install -r requirements/build/cpu.txt --index-strategy unsafe-best-match
+          uv pip install -r requirements/test/cpu.txt --index-strategy unsafe-best-match
+          uv pip install -e . --no-build-isolation
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: 2
+      - name: Run targeted fairness tests
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          VLLM_NO_USAGE_STATS: "1"
+          VLLM_DO_NOT_TRACK: "1"
+        run: |
+          python -m pytest -q tests/v1/core/test_scheduler_kv_fairness.py
