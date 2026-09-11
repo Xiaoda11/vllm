@@ -21,6 +21,7 @@ def test_waiting_kv_blocked_request_does_not_block_lighter_request():
     # BlockPool reserves block 0 as the null block, so num_blocks=2 gives
     # exactly one allocatable KV block for this test.
     scheduler = create_scheduler(
+        max_num_seqs=2,
         max_num_batched_tokens=8,
         num_blocks=2,
         block_size=4,
