@@ -30,6 +30,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           CUDA_VISIBLE_DEVICES: ""
+          VLLM_TARGET_DEVICE: "cpu"
           VLLM_NO_USAGE_STATS: "1"
           VLLM_DO_NOT_TRACK: "1"
         run: |
