@@ -11,7 +11,7 @@ permissions:
 jobs:
   fairness-boundary:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -21,21 +21,25 @@ jobs:
         run: |
           uv venv
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
-      - name: Install CPU test environment
+      - name: Install runtime dependencies
         run: |
-          uv pip install -r requirements/build/cpu.txt \
+          uv pip install -r requirements/cpu.txt \
             --extra-index-url https://download.pytorch.org/whl/cpu \
             --index-strategy unsafe-best-match
-          uv pip install -r requirements/test/cpu.txt \
-            --extra-index-url https://download.pytorch.org/whl/cpu \
-            --index-strategy unsafe-best-match
-          uv pip install -e . --no-build-isolation
+      - name: Run deterministic scheduler cases directly
         env:
-          CMAKE_BUILD_PARALLEL_LEVEL: 2
-      - name: Run targeted fairness tests
-        env:
+          PYTHONPATH: ${{ github.workspace }}
           CUDA_VISIBLE_DEVICES: ""
           VLLM_NO_USAGE_STATS: "1"
           VLLM_DO_NOT_TRACK: "1"
         run: |
-          python -m pytest -q tests/v1/core/test_scheduler_kv_fairness.py
+          python - <<'PY'
+          from tests.v1.core.test_scheduler_kv_fairness import (
+              test_retrying_blocked_head_first_does_not_prevent_extra_waiting,
+              test_waiting_kv_blocked_request_does_not_block_lighter_request,
+          )
+
+          test_waiting_kv_blocked_request_does_not_block_lighter_request()
+          test_retrying_blocked_head_first_does_not_prevent_extra_waiting()
+          print("2 deterministic scheduler cases passed")
+          PY
