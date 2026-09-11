@@ -102,17 +102,19 @@ def test_retrying_blocked_head_first_does_not_prevent_extra_waiting():
     output = scheduler.schedule()
     assert output.num_scheduled_tokens == {"incumbent": 1, "light": 3}
     assert "heavy" not in output.num_scheduled_tokens
-    assert [request.request_id for request in scheduler.waiting] == ["heavy"]
+    assert not scheduler.waiting
+    assert [request.request_id for request in scheduler.skipped_waiting] == ["heavy"]
     scheduler.update_from_output(output, _model_output("incumbent", "light"))
 
-    # Free the older incumbent. Heavy is now the first waiting request again,
-    # but the bypassed light request retains one block. Only three of four
-    # usable blocks are free, so heavy still cannot enter.
+    # Free the older incumbent. Heavy is retried from skipped_waiting before
+    # younger waiting work, but the bypassed light request retains one block.
+    # Only three of four usable blocks are free, so heavy still cannot enter.
     scheduler.finish_requests("incumbent", RequestStatus.FINISHED_ABORTED)
     output = scheduler.schedule()
     assert output.num_scheduled_tokens == {"light": 1}
     assert "heavy" not in output.num_scheduled_tokens
-    assert [request.request_id for request in scheduler.waiting] == ["heavy"]
+    assert not scheduler.waiting
+    assert [request.request_id for request in scheduler.skipped_waiting] == ["heavy"]
     scheduler.update_from_output(output, _model_output("light"))
 
     # The heavy request itself is feasible: once the bypassed request releases
