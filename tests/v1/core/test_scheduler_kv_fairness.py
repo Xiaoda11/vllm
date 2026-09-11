@@ -100,6 +100,7 @@ def test_retrying_blocked_head_first_does_not_prevent_extra_waiting():
     # blocks, so it is skipped; light needs one and is admitted behind it.
     output = scheduler.schedule()
     assert output.num_scheduled_tokens == {"incumbent": 1, "light": 3}
+    assert "heavy" not in output.num_scheduled_tokens
     assert [request.request_id for request in scheduler.waiting] == ["heavy"]
     scheduler.update_from_output(output, _model_output("incumbent", "light"))
 
@@ -109,6 +110,7 @@ def test_retrying_blocked_head_first_does_not_prevent_extra_waiting():
     scheduler.finish_requests("incumbent", RequestStatus.FINISHED_ABORTED)
     output = scheduler.schedule()
     assert output.num_scheduled_tokens == {"light": 1}
+    assert "heavy" not in output.num_scheduled_tokens
     assert [request.request_id for request in scheduler.waiting] == ["heavy"]
     scheduler.update_from_output(output, _model_output("light"))
 
