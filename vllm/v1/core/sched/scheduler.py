@@ -219,6 +219,10 @@ class Scheduler(SchedulerInterface):
         # the head of the queue. Cleared when the request is finally
         # admitted or removed. See MAX_KV_BLOCKED_BYPASSES above.
         self._kv_blocked_bypass_counts: dict[str, int] = {}
+        # Per blocked head, remember younger requests that were actually
+        # admitted while the head was KV-blocked. These are the only requests
+        # eligible for narrow revocable-backfill reclamation.
+        self._kv_blocked_backfill_ids: dict[str, list[str]] = {}
         self.running: list[Request] = []
 
         # The request IDs that are finished in between the previous and the
@@ -1202,6 +1206,173 @@ class Scheduler(SchedulerInterface):
                 )
 
                 if new_blocks is None:
+                    # Narrow revocable-backfill prototype. A previously admitted
+                    # younger request may be the only thing preventing this older
+                    # FCFS head from fitting. If reclaiming one tracked bypasser
+                    # is sufficient, undo that bypasser's work for this step,
+                    # preempt it through the normal scheduler path, and retry the
+                    # blocked head immediately. Keep the first version deliberately
+                    # scoped to local KV-only decode backfills.
+                    can_try_reclaim = (
+                        self.policy == SchedulingPolicy.FCFS
+                        and self.connector is None
+                        and not load_kv_async
+                        and not request.has_encoder_inputs
+                        and num_external_computed_tokens == 0
+                        and num_new_local_computed_tokens == 0
+                        and num_encoder_tokens == 0
+                    )
+                    if can_try_reclaim:
+                        backfill_ids = self._kv_blocked_backfill_ids.get(
+                            request_id, []
+                        )
+                        free_blocks = (
+                            self.kv_cache_manager.block_pool.get_num_free_blocks()
+                        )
+
+                        # Reproduce the non-mutating block requirement used by
+                        # KVCacheManager.allocate_slots(). allocate_slots() has
+                        # already returned None, so this only answers whether
+                        # reclaiming one known bypasser would close the deficit.
+                        manager = self.kv_cache_manager
+                        coordinator = manager.coordinator
+                        new_computed_block_list = new_computed_blocks.blocks
+                        num_local_computed_tokens = (
+                            request.num_computed_tokens
+                            + num_new_local_computed_tokens
+                        )
+                        total_computed_tokens = min(
+                            num_local_computed_tokens
+                            + num_external_computed_tokens,
+                            self.max_model_len,
+                        )
+                        watermark_blocks = (
+                            manager.watermark_blocks
+                            if self.running
+                            and request.status
+                            in (RequestStatus.WAITING, RequestStatus.PREEMPTED)
+                            else 0
+                        )
+                        if self.scheduler_reserve_full_isl:
+                            full_num_tokens = min(
+                                request.num_tokens, self.max_model_len
+                            )
+                            blocks_needed = coordinator.get_num_blocks_to_allocate(
+                                request_id=request_id,
+                                num_tokens=full_num_tokens,
+                                new_computed_blocks=new_computed_block_list,
+                                num_encoder_tokens=0,
+                                total_computed_tokens=total_computed_tokens,
+                                num_local_computed_tokens=(
+                                    num_local_computed_tokens
+                                ),
+                                num_tokens_main_model=full_num_tokens,
+                                apply_admission_cap=True,
+                            )
+                        else:
+                            num_tokens_main_model = (
+                                total_computed_tokens + num_new_tokens
+                            )
+                            num_tokens_need_slot = min(
+                                num_tokens_main_model
+                                + effective_lookahead_tokens,
+                                self.max_model_len,
+                            )
+                            blocks_needed = coordinator.get_num_blocks_to_allocate(
+                                request_id=request_id,
+                                num_tokens=num_tokens_need_slot,
+                                new_computed_blocks=new_computed_block_list,
+                                num_encoder_tokens=0,
+                                total_computed_tokens=(
+                                    num_local_computed_tokens
+                                    + num_external_computed_tokens
+                                ),
+                                num_local_computed_tokens=(
+                                    num_local_computed_tokens
+                                ),
+                                num_tokens_main_model=num_tokens_main_model,
+                            )
+                        required_free_blocks = (
+                            blocks_needed + watermark_blocks + reserved_blocks
+                        )
+
+                        for backfill_id in list(backfill_ids):
+                            backfill = self.requests.get(backfill_id)
+                            if (
+                                backfill is None
+                                or backfill.status != RequestStatus.RUNNING
+                                or backfill not in self.running
+                                or backfill not in scheduled_running_reqs
+                                or backfill.is_prefill_chunk
+                                or backfill.has_encoder_inputs
+                                or backfill.lora_request is not None
+                            ):
+                                continue
+
+                            # Only count blocks that would actually return to the
+                            # pool if this request were freed. Shared prefix blocks
+                            # (ref_cnt > 1) do not close the head's deficit.
+                            seen_blocks: set[int] = set()
+                            reclaimable_blocks = 0
+                            for group in manager.get_blocks(backfill_id).blocks:
+                                for block in group:
+                                    block_obj = id(block)
+                                    if block_obj in seen_blocks:
+                                        continue
+                                    seen_blocks.add(block_obj)
+                                    if not block.is_null and block.ref_cnt == 1:
+                                        reclaimable_blocks += 1
+
+                            if not (
+                                required_free_blocks > free_blocks
+                                and required_free_blocks
+                                <= free_blocks + reclaimable_blocks
+                            ):
+                                continue
+
+                            # The bypasser was already selected in the RUNNING
+                            # phase of this same schedule() call. Roll that
+                            # selection back before normal preemption frees KV.
+                            scheduled_running_reqs.remove(backfill)
+                            restored_tokens = num_scheduled_tokens.pop(
+                                backfill_id
+                            )
+                            token_budget += restored_tokens
+                            input_budget += restored_tokens + draft_slots
+                            req_to_new_blocks.pop(backfill_id, None)
+                            scheduled_spec_decode_tokens.pop(backfill_id, None)
+                            scheduled_encoder_inputs.pop(backfill_id, None)
+                            self.running.remove(backfill)
+                            self._preempt_request(
+                                backfill,
+                                scheduled_timestamp,
+                                drop_stale_output=self.requires_kv_delivery,
+                            )
+                            preempted_reqs.append(backfill)
+
+                            # Retry the protected head with the reclaimed KV.
+                            new_blocks = manager.allocate_slots(
+                                request,
+                                num_new_tokens,
+                                num_new_computed_tokens=(
+                                    num_new_local_computed_tokens
+                                ),
+                                new_computed_blocks=new_computed_blocks,
+                                num_lookahead_tokens=effective_lookahead_tokens,
+                                num_external_computed_tokens=(
+                                    num_external_computed_tokens
+                                ),
+                                delay_cache_blocks=load_kv_async,
+                                num_encoder_tokens=num_encoder_tokens,
+                                full_sequence_must_fit=(
+                                    self.scheduler_reserve_full_isl
+                                ),
+                                reserved_blocks=reserved_blocks,
+                                has_scheduled_reqs=bool(self.running),
+                            )
+                            break
+
+                if new_blocks is None:
                     # The request cannot be scheduled.
 
                     # NOTE: we need to untouch the request from the encode cache
@@ -1250,10 +1421,16 @@ class Scheduler(SchedulerInterface):
                         # each of them.
                         for blocked_id in self._kv_blocked_bypass_counts:
                             self._kv_blocked_bypass_counts[blocked_id] += 1
+                            backfills = self._kv_blocked_backfill_ids.setdefault(
+                                blocked_id, []
+                            )
+                            if request_id not in backfills:
+                                backfills.append(request_id)
                     else:
                         # This request was itself a tracked KV-blocked head,
                         # now finally admitted -- its bypass budget resets.
                         self._kv_blocked_bypass_counts.pop(request_id, None)
+                        self._kv_blocked_backfill_ids.pop(request_id, None)
                 if load_kv_async:
                     # If loading async, allocate memory and put request
                     # into the WAITING_FOR_REMOTE_KV state.
@@ -2603,7 +2780,12 @@ class Scheduler(SchedulerInterface):
             self.waiting.remove_requests(waiting_requests_to_remove)
             self.skipped_waiting.remove_requests(waiting_requests_to_remove)
             for removed_request in waiting_requests_to_remove:
-                self._kv_blocked_bypass_counts.pop(removed_request.request_id, None)
+                removed_id = removed_request.request_id
+                self._kv_blocked_bypass_counts.pop(removed_id, None)
+                self._kv_blocked_backfill_ids.pop(removed_id, None)
+                for backfills in self._kv_blocked_backfill_ids.values():
+                    while removed_id in backfills:
+                        backfills.remove(removed_id)
 
         # Second pass: set status and free requests
         for request in valid_requests:
