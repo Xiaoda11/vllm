@@ -1,0 +1,98 @@
+name: port-mrv2-trace-v029
+
+on:
+  push:
+    branches:
+      - port/scheduler-trace-v029
+    paths:
+      - .github/workflows/port-mrv2-trace-v029.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-port:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out migration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply narrow MRV2 trace wiring
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "vllm/v1/core/sched/scheduler.py",
+              """        if trace_writer is not None:\n            assert trace_before is not None\n""",
+              """        if trace_writer is not None:\n            # Trace-only cross-layer correlation. Keep the ordinary\n            # SchedulerOutput shape untouched when tracing is disabled.\n            scheduler_output.scheduler_trace_step_id = self.current_step\n            assert trace_before is not None\n""",
+          )
+
+          replace_once(
+              "vllm/v1/worker/gpu/model_runner.py",
+              "from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput\n",
+              """from vllm.v1.core.sched.model_runner_trace_event import (\n    make_model_runner_batch_event,\n)\nfrom vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput\nfrom vllm.v1.core.sched.trace import create_model_runner_trace_writer\n""",
+          )
+
+          replace_once(
+              "vllm/v1/worker/gpu/model_runner.py",
+              """        self.observability_config = vllm_config.observability_config\n        self.jit_warmup_registry = JitWarmupRegistry(vllm_config)\n\n        self.device = device\n""",
+              """        self.observability_config = vllm_config.observability_config\n        self.jit_warmup_registry = JitWarmupRegistry(vllm_config)\n        self.model_runner_trace_writer = create_model_runner_trace_writer()\n\n        self.device = device\n""",
+          )
+
+          replace_once(
+              "vllm/v1/worker/gpu/model_runner.py",
+              """            ),\n        )\n        return pcp.maybe_partition_pcp_batch(\n            self.pcp_manager,\n            input_batch,\n            padded_num_tokens=batch_desc.num_tokens,\n        )\n\n    def prepare_attn(\n""",
+              """            ),\n        )\n        trace_writer = self.model_runner_trace_writer\n        if trace_writer is not None:\n            trace_writer.record(\n                make_model_runner_batch_event(\n                    step_id=getattr(scheduler_output, \"scheduler_trace_step_id\", 0),\n                    request_ids=req_ids,\n                    persistent_rows=idx_mapping_np,\n                    num_scheduled_tokens=num_scheduled_tokens_upper_bound,\n                    scheduler_total_num_scheduled_tokens=(\n                        scheduler_output.total_num_scheduled_tokens\n                    ),\n                    runner_num_tokens=num_tokens,\n                    model_num_tokens_after_padding=num_tokens_after_padding,\n                    num_reqs_after_padding=num_reqs_padded,\n                    has_prefill=batch_req_state.has_prefill,\n                    cudagraph_mode=batch_desc.cg_mode.name,\n                    adaptive_verification_active=(adaptive_verification is not None),\n                    batch_sharded_sampling_enabled=(self.batch_sharder is not None),\n                )\n            )\n        return pcp.maybe_partition_pcp_batch(\n            self.pcp_manager,\n            input_batch,\n            padded_num_tokens=batch_desc.num_tokens,\n        )\n\n    def prepare_attn(\n""",
+          )
+
+          replace_once(
+              "vllm/v1/worker/gpu/model_runner.py",
+              """    def shutdown(self) -> None:\n        \"\"\"Release GPU tensors (model weights, KV caches, workspace) so that\n        memory is reclaimable when running in the same process.\"\"\"\n        torch.accelerator.synchronize()\n""",
+              """    def shutdown(self) -> None:\n        \"\"\"Release GPU tensors (model weights, KV caches, workspace) so that\n        memory is reclaimable when running in the same process.\"\"\"\n        if self.model_runner_trace_writer is not None:\n            self.model_runner_trace_writer.close()\n            self.model_runner_trace_writer = None\n        torch.accelerator.synchronize()\n""",
+          )
+
+          replace_once(
+              "tests/v1/core/test_scheduler_trace.py",
+              """        output = scheduler.schedule()\n        assert output.num_scheduled_tokens == {\"trace-off\": 16}\n""",
+              """        output = scheduler.schedule()\n        assert output.num_scheduled_tokens == {\"trace-off\": 16}\n        assert not hasattr(output, \"scheduler_trace_step_id\")\n""",
+          )
+
+          replace_once(
+              "tests/v1/core/test_scheduler_trace.py",
+              """        output = scheduler.schedule()\n        assert output.num_scheduled_tokens == {\"trace-on\": 24}\n""",
+              """        output = scheduler.schedule()\n        assert output.num_scheduled_tokens == {\"trace-on\": 24}\n        assert output.scheduler_trace_step_id == 1\n""",
+          )
+          PY
+
+          git diff --check
+          python -m py_compile \
+            vllm/v1/core/sched/scheduler.py \
+            vllm/v1/core/sched/model_runner_trace_event.py \
+            vllm/v1/worker/gpu/model_runner.py \
+            tests/v1/core/test_scheduler_trace.py
+
+      - name: Commit migration patch
+        shell: bash
+        run: |
+          git config user.name "Xiaoda11"
+          git config user.email "110323355+Xiaoda11@users.noreply.github.com"
+          git add \
+            vllm/v1/core/sched/scheduler.py \
+            vllm/v1/worker/gpu/model_runner.py \
+            tests/v1/core/test_scheduler_trace.py
+          if ! git diff --cached --quiet; then
+            git commit -m "port(trace): wire MRV2 batch events on v0.29"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
