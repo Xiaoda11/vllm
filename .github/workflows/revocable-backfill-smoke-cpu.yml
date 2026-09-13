@@ -1,0 +1,37 @@
+name: revocable-backfill-smoke-cpu
+
+on:
+  push:
+    branches:
+      - "test/pr33499-revocable-backfill-regression"
+    paths:
+      - "tests/v1/core/test_scheduler_revocable_backfill_regression.py"
+      - "vllm/v1/core/sched/scheduler.py"
+      - ".github/workflows/revocable-backfill-smoke-cpu.yml"
+  workflow_dispatch:
+
+jobs:
+  smoke-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VLLM_TARGET_DEVICE: cpu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU runtime dependencies
+        run: |
+          pipx install uv
+          uv venv --python 3.12
+          uv pip install \
+            --index-strategy unsafe-best-match \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            -r requirements/cpu.txt \
+            pytest==9.1.1 \
+            tblib
+      - name: Run focused revocable-backfill contracts
+        run: >-
+          .venv/bin/python -m pytest -q
+          tests/v1/core/test_scheduler_revocable_backfill_regression.py
