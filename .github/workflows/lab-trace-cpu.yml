@@ -20,6 +20,7 @@ on:
       - "lab_tests/test_model_runner_trace_event.py"
       - "lab_tests/test_model_runner_trace_wiring.py"
       - "tests/v1/core/test_scheduler_trace.py"
+      - "tests/v1/core/test_scheduler_trace_worker_rpc.py"
       - ".github/workflows/lab-trace-cpu.yml"
   workflow_dispatch:
 
@@ -78,7 +79,8 @@ jobs:
             pytest==9.1.1 \
             tblib
 
-      - name: Run real Scheduler trace fixture
+      - name: Run real Scheduler and WorkerProc trace fixtures
         run: >-
           .venv/bin/python -m pytest -q
           tests/v1/core/test_scheduler_trace.py
+          tests/v1/core/test_scheduler_trace_worker_rpc.py
