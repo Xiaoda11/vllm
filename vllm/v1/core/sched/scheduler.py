@@ -1221,6 +1221,12 @@ class Scheduler(SchedulerInterface):
                         and num_external_computed_tokens == 0
                         and num_new_local_computed_tokens == 0
                         and num_encoder_tokens == 0
+                        # Keep the prototype out of overlapping-batch paths.
+                        and self.vllm_config.max_concurrent_batches == 1
+                        # The reclaim accounting below is deliberately limited
+                        # to one KV group until hybrid-group semantics are
+                        # validated separately.
+                        and self.kv_cache_manager.num_kv_cache_groups == 1
                     )
                     if can_try_reclaim:
                         backfill_ids = self._kv_blocked_backfill_ids.get(
@@ -1306,6 +1312,10 @@ class Scheduler(SchedulerInterface):
                                 or backfill.is_prefill_chunk
                                 or backfill.has_encoder_inputs
                                 or backfill.lora_request is not None
+                                # Immediate retry of the protected head is only
+                                # correct if preemption returns this request's KV
+                                # blocks to the pool in the same scheduling step.
+                                or not self._request_blocks_can_be_freed(backfill)
                             ):
                                 continue
 
@@ -2732,6 +2742,18 @@ class Scheduler(SchedulerInterface):
             if self.log_stats:
                 request.record_event(EngineCoreEventType.QUEUED)
 
+    def _clear_kv_blocked_tracking(self, request_id: str) -> None:
+        """Remove a request from revocable-backfill bookkeeping."""
+        self._kv_blocked_bypass_counts.pop(request_id, None)
+        self._kv_blocked_backfill_ids.pop(request_id, None)
+        for blocked_id, backfill_ids in self._kv_blocked_backfill_ids.items():
+            if request_id in backfill_ids:
+                self._kv_blocked_backfill_ids[blocked_id] = [
+                    backfill_id
+                    for backfill_id in backfill_ids
+                    if backfill_id != request_id
+                ]
+
     def finish_requests(
         self, request_ids: str | Iterable[str] | None, finished_status: RequestStatus
     ) -> list[Request]:
@@ -2780,12 +2802,7 @@ class Scheduler(SchedulerInterface):
             self.waiting.remove_requests(waiting_requests_to_remove)
             self.skipped_waiting.remove_requests(waiting_requests_to_remove)
             for removed_request in waiting_requests_to_remove:
-                removed_id = removed_request.request_id
-                self._kv_blocked_bypass_counts.pop(removed_id, None)
-                self._kv_blocked_backfill_ids.pop(removed_id, None)
-                for backfills in self._kv_blocked_backfill_ids.values():
-                    while removed_id in backfills:
-                        backfills.remove(removed_id)
+                self._clear_kv_blocked_tracking(removed_request.request_id)
 
         # Second pass: set status and free requests
         for request in valid_requests:
@@ -2821,6 +2838,10 @@ class Scheduler(SchedulerInterface):
 
         self.encoder_cache_manager.free(request)
         request_id = request.request_id
+        # A running backfill may finish through update_from_output() rather than
+        # finish_requests(); centralize cleanup here so no stale revocation
+        # candidate survives either completion path.
+        self._clear_kv_blocked_tracking(request_id)
         self.finished_req_ids.add(request_id)
         if self.finished_req_ids_dict is not None:
             self.finished_req_ids_dict[request.client_index].add(request_id)
