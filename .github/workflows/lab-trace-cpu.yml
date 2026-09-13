@@ -49,6 +49,8 @@ jobs:
   real-scheduler-cpu:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      VLLM_TARGET_DEVICE: cpu
 
     steps:
       - name: Check out repository
