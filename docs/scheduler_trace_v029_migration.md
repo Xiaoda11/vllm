@@ -86,14 +86,27 @@ whose shared-memory `MessageQueue` serializes RPC payloads with Python
 `pickle.Pickler`. This narrows the cross-process correlation risk, but it is not
 a substitute for a real multi-process engine run.
 
-The real-Scheduler CPU job reports **3 passed** (`VLLM_TARGET_DEVICE=cpu`). It
-calls `Scheduler.schedule()` directly and covers:
+The real-Scheduler CPU job reports **6 passed** (`VLLM_TARGET_DEVICE=cpu`). It
+calls the real `Scheduler` state machine and covers:
 
 - trace disabled on the ordinary scheduling path, including absence of the
   trace-only correlation attribute;
 - trace enabled for a real WAITING -> RUNNING prefill with KV block allocation,
   including the Scheduler/runner step correlation ID;
-- a real waiting-path KV allocation failure with the request left queued.
+- a real waiting-path KV allocation failure with the request left queued;
+- request completion through `update_from_output()`, followed by the next
+  Scheduler step flushing the request through `finished_req_ids`;
+- real KV-pressure preemption using the upstream 10-usable-block / two 80-token
+  request construction, including `RUNNING -> PREEMPTED`, the preempted request
+  ID and freed KV blocks in the trace event;
+- a synchronous KV-load path through the v0.29 Scheduler using the repository's
+  mock KV connector, verifying that `SchedulerOutput.has_sync_kv_loads` and the
+  emitted `kv_connector.has_sync_kv_loads` trace field are both true.
+
+The synchronous-KV fixture exercises real Scheduler connector integration but
+uses a mock connector to make the remote match/load mode deterministic. It does
+not validate an actual network transfer, remote persistence, transport failure,
+or end-to-end P/D disaggregation.
 
 Ruff check/format checks and the repository-pinned Ruff/typos hooks passed on the
 original migration checkpoint. Full pre-commit execution remains blocked during
@@ -116,8 +129,9 @@ the v0.26 benchmark results.
 2. Run a real TP batch-sharded-sampling GPU test and validate recorded
    `worker_rank` / `tp_rank`, request ownership and logit splits against runtime
    behavior.
-3. Extend the real-Scheduler fixture to completion/preemption and a real
-   connector path, including synchronous KV-load behavior where practical.
+3. Exercise an actual KV connector transport rather than the mock connector,
+   including synchronous-load completion/failure behavior and, where relevant,
+   P/D disaggregation semantics.
 4. Validate PCP semantics. `model_runner_batch` is emitted before
    `pcp.maybe_partition_pcp_batch`, so its request/token counts describe the
    pre-partition batch; the step ID is preserved onto the partitioned batch, but
