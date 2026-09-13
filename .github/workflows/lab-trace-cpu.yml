@@ -64,6 +64,7 @@ jobs:
           pipx install uv
           uv venv --python 3.12
           uv pip install \
+            --index-strategy unsafe-best-match \
             --extra-index-url https://download.pytorch.org/whl/cpu \
             -r requirements/cpu.txt \
             pytest==9.1.1
