@@ -2,12 +2,14 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import json
+import multiprocessing as mp
 import pickle
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
+from vllm.distributed.device_communicators.shm_broadcast import Handle, MessageQueue
 from vllm.v1.core.sched.trace import (
     LEGACY_SCHEDULER_TRACE_PATH_ENV,
     SCHEDULER_TRACE_PATH_ENV,
@@ -38,6 +40,26 @@ def _model_output(req_id: str, token_id: int) -> ModelRunnerOutput:
         prompt_logprobs_dict={},
         pooler_output=[],
     )
+
+
+def _message_queue_trace_reader(handle: Handle, result_conn) -> None:
+    reader = MessageQueue.create_from_handle(handle, rank=0)
+    try:
+        reader.wait_until_ready()
+        method, args, kwargs, output_rank = reader.dequeue(timeout=10)
+        scheduler_output = args[0]
+        result_conn.send(
+            (
+                method,
+                getattr(scheduler_output, "scheduler_trace_step_id", None),
+                scheduler_output.num_scheduled_tokens,
+                kwargs,
+                output_rank,
+            )
+        )
+    finally:
+        reader.shutdown()
+        result_conn.close()
 
 
 def test_real_scheduler_trace_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -114,6 +136,62 @@ def test_real_scheduler_trace_records_schedule(
     assert event["kv_cache"]["num_free_blocks_after"] < event["kv_cache"][
         "num_free_blocks_before"
     ]
+
+
+def test_scheduler_trace_step_id_survives_message_queue_process_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the actual vLLM MessageQueue serialization across a process."""
+    _disable_trace(monkeypatch)
+    trace_path = tmp_path / "message-queue.jsonl"
+    monkeypatch.setenv(SCHEDULER_TRACE_PATH_ENV, str(trace_path))
+
+    scheduler = create_scheduler(
+        max_num_batched_tokens=32,
+        num_blocks=8,
+        block_size=16,
+    )
+    try:
+        (request,) = create_requests(
+            num_requests=1,
+            num_tokens=24,
+            block_size=16,
+            req_ids=["ipc-trace"],
+        )
+        scheduler.add_request(request)
+        scheduler_output = scheduler.schedule()
+        assert scheduler_output.scheduler_trace_step_id == 1
+    finally:
+        scheduler.shutdown()
+
+    writer = MessageQueue(n_reader=1, n_local_reader=1)
+    ctx = mp.get_context("spawn")
+    result_parent, result_child = ctx.Pipe(duplex=False)
+    proc = ctx.Process(
+        target=_message_queue_trace_reader,
+        args=(writer.export_handle(), result_child),
+    )
+    proc.start()
+    result_child.close()
+    try:
+        writer.wait_until_ready()
+        writer.enqueue(("execute_model", (scheduler_output,), {}, 0))
+        assert result_parent.poll(15), "MessageQueue reader did not return in time"
+        method, step_id, num_scheduled_tokens, kwargs, output_rank = result_parent.recv()
+        assert method == "execute_model"
+        assert step_id == 1
+        assert num_scheduled_tokens == {"ipc-trace": 24}
+        assert kwargs == {}
+        assert output_rank == 0
+    finally:
+        writer.shutdown()
+        result_parent.close()
+        proc.join(timeout=15)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
+
+    assert proc.exitcode == 0
 
 
 def test_real_scheduler_trace_records_waiting_allocation_failure(
