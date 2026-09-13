@@ -63,7 +63,11 @@ from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
 from vllm.utils.mem_utils import DeviceMemoryProfiler, format_gib
 from vllm.utils.torch_utils import STR_DTYPE_TO_TORCH_DTYPE
+from vllm.v1.core.sched.model_runner_trace_event import (
+    make_model_runner_batch_event,
+)
 from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput
+from vllm.v1.core.sched.trace import create_model_runner_trace_writer
 from vllm.v1.kv_cache_interface import (
     CircularBufferSpec,
     KVCacheConfig,
@@ -186,6 +190,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         )
         self.observability_config = vllm_config.observability_config
         self.jit_warmup_registry = JitWarmupRegistry(vllm_config)
+        self.model_runner_trace_writer = create_model_runner_trace_writer()
 
         self.device = device
         self.dtype = self.model_config.dtype
@@ -1359,6 +1364,26 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 else None
             ),
         )
+        trace_writer = self.model_runner_trace_writer
+        if trace_writer is not None:
+            trace_writer.record(
+                make_model_runner_batch_event(
+                    step_id=getattr(scheduler_output, "scheduler_trace_step_id", 0),
+                    request_ids=req_ids,
+                    persistent_rows=idx_mapping_np,
+                    num_scheduled_tokens=num_scheduled_tokens_upper_bound,
+                    scheduler_total_num_scheduled_tokens=(
+                        scheduler_output.total_num_scheduled_tokens
+                    ),
+                    runner_num_tokens=num_tokens,
+                    model_num_tokens_after_padding=num_tokens_after_padding,
+                    num_reqs_after_padding=num_reqs_padded,
+                    has_prefill=batch_req_state.has_prefill,
+                    cudagraph_mode=batch_desc.cg_mode.name,
+                    adaptive_verification_active=(adaptive_verification is not None),
+                    batch_sharded_sampling_enabled=(self.batch_sharder is not None),
+                )
+            )
         return pcp.maybe_partition_pcp_batch(
             self.pcp_manager,
             input_batch,
@@ -2031,6 +2056,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
     def shutdown(self) -> None:
         """Release GPU tensors (model weights, KV caches, workspace) so that
         memory is reclaimable when running in the same process."""
+        if self.model_runner_trace_writer is not None:
+            self.model_runner_trace_writer.close()
+            self.model_runner_trace_writer = None
         torch.accelerator.synchronize()
         self.cudagraph_manager = None
         if hasattr(self, "kv_caches"):

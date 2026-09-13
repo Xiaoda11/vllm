@@ -1434,6 +1434,9 @@ class Scheduler(SchedulerInterface):
         with record_function_or_nullcontext("schedule: update_after_schedule"):
             self._update_after_schedule(scheduler_output)
         if trace_writer is not None:
+            # Trace-only cross-layer correlation. Keep the ordinary
+            # SchedulerOutput shape untouched when tracing is disabled.
+            scheduler_output.scheduler_trace_step_id = self.current_step
             assert trace_before is not None
             assert trace_prefix_cached_tokens is not None
             assert trace_allocation_failures is not None

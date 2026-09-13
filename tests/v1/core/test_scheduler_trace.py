@@ -40,6 +40,7 @@ def test_real_scheduler_trace_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
         scheduler.add_request(request)
         output = scheduler.schedule()
         assert output.num_scheduled_tokens == {"trace-off": 16}
+        assert not hasattr(output, "scheduler_trace_step_id")
     finally:
         scheduler.shutdown()
 
@@ -67,6 +68,7 @@ def test_real_scheduler_trace_records_schedule(
         scheduler.add_request(request)
         output = scheduler.schedule()
         assert output.num_scheduled_tokens == {"trace-on": 24}
+        assert output.scheduler_trace_step_id == 1
     finally:
         scheduler.shutdown()
 
