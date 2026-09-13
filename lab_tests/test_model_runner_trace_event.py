@@ -32,6 +32,7 @@ make_sampler_batch_shard_event = event_mod.make_sampler_batch_shard_event
 def test_model_runner_event_preserves_v026_join_fields() -> None:
     event = make_model_runner_batch_event(
         step_id=7,
+        worker_rank=3,
         request_ids=["A", "B"],
         persistent_rows=[2, 9],
         num_scheduled_tokens=[1, 4095],
@@ -49,6 +50,7 @@ def test_model_runner_event_preserves_v026_join_fields() -> None:
     assert event["schema_version"] == 1
     assert event["event"] == "model_runner_batch"
     assert event["step_id"] == 7
+    assert event["worker_rank"] == 3
     assert event["timestamp_ns"] == 123
     assert event["request_ids"] == ["A", "B"]
     assert event["persistent_rows"] == [2, 9]
@@ -66,6 +68,7 @@ def test_model_runner_event_preserves_v026_join_fields() -> None:
 def test_model_runner_event_distinguishes_trim_and_graph_padding() -> None:
     event = make_model_runner_batch_event(
         step_id=11,
+        worker_rank=0,
         request_ids=["decode"],
         persistent_rows=[4],
         num_scheduled_tokens=[5],
@@ -95,6 +98,7 @@ def test_model_runner_event_rejects_inconsistent_cpu_shapes() -> None:
     with pytest.raises(ValueError, match="identical lengths"):
         make_model_runner_batch_event(
             step_id=1,
+            worker_rank=0,
             request_ids=["A", "B"],
             persistent_rows=[0],
             num_scheduled_tokens=[1, 1],
@@ -109,9 +113,29 @@ def test_model_runner_event_rejects_inconsistent_cpu_shapes() -> None:
         )
 
 
+def test_model_runner_event_rejects_negative_worker_rank() -> None:
+    with pytest.raises(ValueError, match="worker_rank"):
+        make_model_runner_batch_event(
+            step_id=1,
+            worker_rank=-1,
+            request_ids=["A"],
+            persistent_rows=[0],
+            num_scheduled_tokens=[1],
+            scheduler_total_num_scheduled_tokens=1,
+            runner_num_tokens=1,
+            model_num_tokens_after_padding=1,
+            num_reqs_after_padding=1,
+            has_prefill=False,
+            cudagraph_mode="NONE",
+            adaptive_verification_active=False,
+            batch_sharded_sampling_enabled=False,
+        )
+
+
 def test_sampler_shard_event_records_owner_mapping() -> None:
     event = make_sampler_batch_shard_event(
         step_id=12,
+        worker_rank=5,
         tp_rank=1,
         tp_size=2,
         global_request_ids=["A", "B", "C", "D"],
@@ -126,6 +150,7 @@ def test_sampler_shard_event_records_owner_mapping() -> None:
 
     assert event["event"] == "sampler_batch_shard"
     assert event["step_id"] == 12
+    assert event["worker_rank"] == 5
     assert event["tp_rank"] == 1
     assert event["tp_size"] == 2
     assert event["ownership"] == "persistent_row_mod_tp"
@@ -141,6 +166,7 @@ def test_sampler_shard_event_rejects_wrong_local_owner() -> None:
     with pytest.raises(ValueError, match="persistent-row ownership"):
         make_sampler_batch_shard_event(
             step_id=2,
+            worker_rank=0,
             tp_rank=0,
             tp_size=2,
             global_request_ids=["A", "B"],
