@@ -6,9 +6,17 @@ from collections.abc import Sequence
 from typing import Any
 
 
+def _validate_worker_rank(worker_rank: int) -> int:
+    rank = int(worker_rank)
+    if rank < 0:
+        raise ValueError("worker_rank must be non-negative")
+    return rank
+
+
 def make_model_runner_batch_event(
     *,
     step_id: int,
+    worker_rank: int,
     request_ids: Sequence[str],
     persistent_rows: Sequence[int],
     num_scheduled_tokens: Sequence[int],
@@ -33,6 +41,7 @@ def make_model_runner_batch_event(
     not accept torch tensors so tracing cannot accidentally introduce a D2H
     transfer or synchronization.
     """
+    rank = _validate_worker_rank(worker_rank)
     req_ids = list(request_ids)
     rows = [int(row) for row in persistent_rows]
     scheduled = [int(count) for count in num_scheduled_tokens]
@@ -57,6 +66,7 @@ def make_model_runner_batch_event(
         "event": "model_runner_batch",
         "timestamp_ns": time.time_ns() if timestamp_ns is None else int(timestamp_ns),
         "step_id": int(step_id),
+        "worker_rank": rank,
         # Backward-compatible v0.26 fields.
         "request_ids": req_ids,
         "persistent_rows": rows,
@@ -84,6 +94,7 @@ def make_model_runner_batch_event(
 def make_sampler_batch_shard_event(
     *,
     step_id: int,
+    worker_rank: int,
     tp_rank: int,
     tp_size: int,
     global_request_ids: Sequence[str],
@@ -102,6 +113,7 @@ def make_sampler_batch_shard_event(
     Scheduler/MRV2 traces can explain which rank actually sampled each request.
     GPU gather indices are intentionally excluded.
     """
+    global_rank = _validate_worker_rank(worker_rank)
     rank = int(tp_rank)
     size = int(tp_size)
     if size <= 0 or not 0 <= rank < size:
@@ -140,6 +152,7 @@ def make_sampler_batch_shard_event(
         "event": "sampler_batch_shard",
         "timestamp_ns": time.time_ns() if timestamp_ns is None else int(timestamp_ns),
         "step_id": int(step_id),
+        "worker_rank": global_rank,
         "tp_rank": rank,
         "tp_size": size,
         "ownership": "persistent_row_mod_tp",
