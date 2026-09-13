@@ -115,12 +115,20 @@ def create_scheduler_trace_writer() -> JsonlTraceWriter | None:
 
 
 def create_model_runner_trace_writer() -> JsonlTraceWriter | None:
+    """Create a process-local MRV2 writer when tracing is enabled.
+
+    Model runners execute in separate worker processes for TP/PP/PCP. A single
+    shared ``*.mrv2.jsonl`` path would make workers race on exclusive creation
+    and, if append mode were used instead, would permit interleaved records.
+    Include the OS process id in the file name so every worker owns one JSONL
+    stream. Events carry the vLLM global worker rank for semantic merging.
+    """
     trace_path = _trace_path_from_env()
     if not trace_path:
         return None
     scheduler_path = Path(trace_path)
     runner_path = scheduler_path.with_name(
-        f"{scheduler_path.stem}.mrv2{scheduler_path.suffix}"
+        f"{scheduler_path.stem}.mrv2.pid{os.getpid()}{scheduler_path.suffix}"
     )
     writer = JsonlTraceWriter(runner_path)
     logger.info("MRV2 trace enabled: %s", writer.path)
