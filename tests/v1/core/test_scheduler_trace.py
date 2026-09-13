@@ -4,6 +4,7 @@
 import json
 import pickle
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -14,7 +15,7 @@ from vllm.v1.core.sched.trace import (
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.request import RequestStatus
 
-from .utils import create_requests, create_scheduler
+from .utils import create_requests, create_scheduler, mock_kv
 
 pytestmark = [pytest.mark.cpu_test, pytest.mark.skip_global_cleanup]
 
@@ -273,3 +274,48 @@ def test_real_scheduler_trace_records_preemption(
     assert request_event["before"]["status"] == "RUNNING"
     assert request_event["after"]["status"] == "PREEMPTED"
     assert any(request_event["freed_block_ids"])
+
+
+def test_real_scheduler_trace_records_sync_kv_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Propagate a synchronous connector load into a real scheduler trace."""
+    _disable_trace(monkeypatch)
+    trace_path = tmp_path / "sync-kv.jsonl"
+    monkeypatch.setenv(SCHEDULER_TRACE_PATH_ENV, str(trace_path))
+    (tmp_path / "config.json").write_text(
+        '{"architectures": ["OPTForCausalLM"], "model_type": "opt"}',
+        encoding="utf-8",
+    )
+
+    block_size = 16
+    scheduler = create_scheduler(
+        model=str(tmp_path),
+        skip_tokenizer_init=True,
+        enable_prefix_caching=True,
+        use_kv_connector=mock_kv(matched_tokens=block_size, is_async=False),
+        block_size=block_size,
+    )
+    try:
+        (request,) = create_requests(
+            num_requests=1,
+            num_tokens=block_size * 2,
+            block_size=block_size,
+            req_ids=["sync-kv"],
+        )
+        scheduler.add_request(request)
+        assert scheduler.connector is not None
+        scheduler.connector.get_num_new_matched_tokens = Mock(
+            return_value=(block_size, False)
+        )
+
+        output = scheduler.schedule()
+        assert output.has_sync_kv_loads is True
+        assert output.num_scheduled_tokens == {"sync-kv": block_size}
+    finally:
+        scheduler.shutdown()
+
+    (event,) = _read_trace(trace_path)
+    assert event["scheduled_request_ids"] == ["sync-kv"]
+    assert event["token_budget"]["scheduled"] == block_size
+    assert event["kv_connector"]["has_sync_kv_loads"] is True
