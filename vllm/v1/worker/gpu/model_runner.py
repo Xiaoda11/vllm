@@ -65,6 +65,7 @@ from vllm.utils.mem_utils import DeviceMemoryProfiler, format_gib
 from vllm.utils.torch_utils import STR_DTYPE_TO_TORCH_DTYPE
 from vllm.v1.core.sched.model_runner_trace_event import (
     make_model_runner_batch_event,
+    make_sampler_batch_shard_event,
 )
 from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput
 from vllm.v1.core.sched.trace import create_model_runner_trace_writer
@@ -1365,10 +1366,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             ),
         )
         trace_writer = self.model_runner_trace_writer
+        trace_step_id = getattr(scheduler_output, "scheduler_trace_step_id", 0)
         if trace_writer is not None:
+            setattr(input_batch, "scheduler_trace_step_id", trace_step_id)
             trace_writer.record(
                 make_model_runner_batch_event(
-                    step_id=getattr(scheduler_output, "scheduler_trace_step_id", 0),
+                    step_id=trace_step_id,
                     request_ids=req_ids,
                     persistent_rows=idx_mapping_np,
                     num_scheduled_tokens=num_scheduled_tokens_upper_bound,
@@ -1384,11 +1387,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     batch_sharded_sampling_enabled=(self.batch_sharder is not None),
                 )
             )
-        return pcp.maybe_partition_pcp_batch(
+        prepared_batch = pcp.maybe_partition_pcp_batch(
             self.pcp_manager,
             input_batch,
             padded_num_tokens=batch_desc.num_tokens,
         )
+        if trace_writer is not None:
+            setattr(prepared_batch, "scheduler_trace_step_id", trace_step_id)
+        return prepared_batch
 
     def prepare_attn(
         self, input_batch: InputBatch
@@ -1434,6 +1440,24 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             input_batch, sorted_logits_indices, grammar_output, shard_metadata = (
                 self.batch_sharder.shard_sampler_inputs(input_batch, grammar_output)
             )
+            trace_writer = self.model_runner_trace_writer
+            if trace_writer is not None:
+                trace_writer.record(
+                    make_sampler_batch_shard_event(
+                        step_id=getattr(
+                            global_input_batch, "scheduler_trace_step_id", 0
+                        ),
+                        tp_rank=self.batch_sharder.tp_rank,
+                        tp_size=shard_metadata.tp_size,
+                        global_request_ids=global_input_batch.req_ids,
+                        global_persistent_rows=global_input_batch.idx_mapping_np,
+                        local_request_ids=input_batch.req_ids,
+                        local_persistent_rows=input_batch.idx_mapping_np,
+                        num_logits_per_rank=shard_metadata.num_logits_per_rank,
+                        num_local_logits=shard_metadata.num_local_logits,
+                        max_num_reqs_per_rank=shard_metadata.max_num_reqs_per_rank,
+                    )
+                )
             # The hidden states must be gathered in rank-owner-sorted order
             # before computing the partial-vocab logits, so that the all-to-all
             # produces full-vocab logits for just the locally-owned requests.
