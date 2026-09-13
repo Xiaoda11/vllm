@@ -79,3 +79,77 @@ def make_model_runner_batch_event(
         "adaptive_verification_active": bool(adaptive_verification_active),
         "batch_sharded_sampling_enabled": bool(batch_sharded_sampling_enabled),
     }
+
+
+def make_sampler_batch_shard_event(
+    *,
+    step_id: int,
+    tp_rank: int,
+    tp_size: int,
+    global_request_ids: Sequence[str],
+    global_persistent_rows: Sequence[int],
+    local_request_ids: Sequence[str],
+    local_persistent_rows: Sequence[int],
+    num_logits_per_rank: Sequence[int],
+    num_local_logits: int,
+    max_num_reqs_per_rank: int,
+    timestamp_ns: int | None = None,
+) -> dict[str, Any]:
+    """Build a CPU-only event for TP batch-sharded sampling ownership.
+
+    v0.29 assigns request ownership by ``persistent_row % tp_size``. The event
+    records the global replicated request layout and the local rank's shard so
+    Scheduler/MRV2 traces can explain which rank actually sampled each request.
+    GPU gather indices are intentionally excluded.
+    """
+    rank = int(tp_rank)
+    size = int(tp_size)
+    if size <= 0 or not 0 <= rank < size:
+        raise ValueError("TP rank/size must satisfy 0 <= rank < size")
+
+    global_ids = list(global_request_ids)
+    global_rows = [int(row) for row in global_persistent_rows]
+    local_ids = list(local_request_ids)
+    local_rows = [int(row) for row in local_persistent_rows]
+    logits_per_rank = [int(count) for count in num_logits_per_rank]
+
+    if len(global_ids) != len(global_rows):
+        raise ValueError("global request IDs and persistent rows must align")
+    if len(local_ids) != len(local_rows):
+        raise ValueError("local request IDs and persistent rows must align")
+    if len(logits_per_rank) != size:
+        raise ValueError("num_logits_per_rank must have one entry per TP rank")
+
+    owner_ranks = [row % size for row in global_rows]
+    reqs_per_rank = [0] * size
+    for owner in owner_ranks:
+        reqs_per_rank[owner] += 1
+
+    expected_local = [
+        (req_id, row)
+        for req_id, row, owner in zip(global_ids, global_rows, owner_ranks)
+        if owner == rank
+    ]
+    if list(zip(local_ids, local_rows)) != expected_local:
+        raise ValueError("local sampler shard does not match persistent-row ownership")
+    if int(num_local_logits) != logits_per_rank[rank]:
+        raise ValueError("num_local_logits does not match this rank's logit split")
+
+    return {
+        "schema_version": 1,
+        "event": "sampler_batch_shard",
+        "timestamp_ns": time.time_ns() if timestamp_ns is None else int(timestamp_ns),
+        "step_id": int(step_id),
+        "tp_rank": rank,
+        "tp_size": size,
+        "ownership": "persistent_row_mod_tp",
+        "global_request_ids": global_ids,
+        "global_persistent_rows": global_rows,
+        "request_owner_ranks": owner_ranks,
+        "local_request_ids": local_ids,
+        "local_persistent_rows": local_rows,
+        "num_reqs_per_rank": reqs_per_rank,
+        "num_logits_per_rank": logits_per_rank,
+        "num_local_logits": int(num_local_logits),
+        "max_num_reqs_per_rank": int(max_num_reqs_per_rank),
+    }
