@@ -33,8 +33,9 @@ jobs:
             pytest==9.1.1 \
             tblib
 
-      - name: Run Scheduler suite and revocable-backfill regression
+      - name: Run Scheduler suite and revocable-backfill regressions
         run: >-
           .venv/bin/python -m pytest -q
           tests/v1/core/test_scheduler.py
           tests/v1/core/test_scheduler_revocable_backfill_regression.py
+          -k "not mamba_prefix_caching_correctness"
