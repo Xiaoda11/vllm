@@ -67,7 +67,8 @@ jobs:
             --index-strategy unsafe-best-match \
             --extra-index-url https://download.pytorch.org/whl/cpu \
             -r requirements/cpu.txt \
-            pytest==9.1.1
+            pytest==9.1.1 \
+            tblib
 
       - name: Run real Scheduler trace fixture
         run: >-
