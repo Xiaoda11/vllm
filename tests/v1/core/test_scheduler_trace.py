@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import json
+import pickle
 from pathlib import Path
 
 import pytest
@@ -69,6 +70,8 @@ def test_real_scheduler_trace_records_schedule(
         output = scheduler.schedule()
         assert output.num_scheduled_tokens == {"trace-on": 24}
         assert output.scheduler_trace_step_id == 1
+        restored_output = pickle.loads(pickle.dumps(output))
+        assert restored_output.scheduler_trace_step_id == 1
     finally:
         scheduler.shutdown()
 
