@@ -45,16 +45,26 @@ for the hook's git+file package. Full hooks must be rerun in a supported
 environment; the branch checkpoint is committed without rerunning that blocked
 hook installation. This is not an all-checks-passed claim.
 
-These are isolated CPU contracts, not a full Scheduler fixture, complete vLLM
-CI, model execution, or GPU performance validation. No v0.29 overhead or
-correctness claim is made from the v0.26 benchmark results.
+A second GitHub Actions CPU job now runs a real v0.29 `Scheduler` fixture with
+`VLLM_TARGET_DEVICE=cpu` and the repository CPU runtime dependencies. Result:
+**3 passed**. The fixture calls `Scheduler.schedule()` directly and covers:
+
+- trace disabled on the ordinary scheduling path;
+- trace enabled for a real WAITING -> RUNNING prefill with KV block allocation;
+- a real waiting-path KV allocation failure with the request left queued.
+
+This closes the original "only extracted Scheduler-method contracts" gap for
+those paths. It does **not** yet validate request completion, real preemption,
+connector transfer/synchronous KV-load behavior, model execution, GPU execution,
+or trace overhead. No v0.29 performance claim is made from the v0.26 benchmark
+results.
 
 ## Remaining gates
 
-1. Run a complete real-Scheduler fixture with trace enabled and disabled using
-   supported vLLM dependencies; exercise normal scheduling, allocation failure,
-   completion, and connector paths.
-2. Run a real-model smoke test and compare trace-off/on output and overhead.
+1. Extend the real-Scheduler fixture to completion/preemption and a real connector
+   path, including synchronous KV-load behavior where practical.
+2. Run a real-model smoke test and compare trace-off/on output and overhead on a
+   supported GPU environment.
 3. Restore MRV2 events while distinguishing logical scheduled tokens, graph
    padding, and sampler batch sharding. Validate cross-layer identities in each
    supported execution mode before making end-to-end claims.
