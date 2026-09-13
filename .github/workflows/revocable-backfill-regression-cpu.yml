@@ -37,3 +37,5 @@ jobs:
         run: >-
           .venv/bin/python -m pytest -q
           tests/v1/core/test_scheduler_revocable_backfill_regression.py
+
+# Manual rerun checkpoint after applying the prototype scheduler patch.
