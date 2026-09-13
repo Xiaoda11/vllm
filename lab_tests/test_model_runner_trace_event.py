@@ -26,6 +26,7 @@ def _load_event_module() -> ModuleType:
 
 event_mod = _load_event_module()
 make_model_runner_batch_event = event_mod.make_model_runner_batch_event
+make_sampler_batch_shard_event = event_mod.make_sampler_batch_shard_event
 
 
 def test_model_runner_event_preserves_v026_join_fields() -> None:
@@ -105,4 +106,48 @@ def test_model_runner_event_rejects_inconsistent_cpu_shapes() -> None:
             cudagraph_mode="NONE",
             adaptive_verification_active=False,
             batch_sharded_sampling_enabled=False,
+        )
+
+
+def test_sampler_shard_event_records_owner_mapping() -> None:
+    event = make_sampler_batch_shard_event(
+        step_id=12,
+        tp_rank=1,
+        tp_size=2,
+        global_request_ids=["A", "B", "C", "D"],
+        global_persistent_rows=[0, 1, 4, 5],
+        local_request_ids=["B", "D"],
+        local_persistent_rows=[1, 5],
+        num_logits_per_rank=[3, 5],
+        num_local_logits=5,
+        max_num_reqs_per_rank=2,
+        timestamp_ns=789,
+    )
+
+    assert event["event"] == "sampler_batch_shard"
+    assert event["step_id"] == 12
+    assert event["tp_rank"] == 1
+    assert event["tp_size"] == 2
+    assert event["ownership"] == "persistent_row_mod_tp"
+    assert event["request_owner_ranks"] == [0, 1, 0, 1]
+    assert event["num_reqs_per_rank"] == [2, 2]
+    assert event["local_request_ids"] == ["B", "D"]
+    assert event["local_persistent_rows"] == [1, 5]
+    assert event["num_logits_per_rank"] == [3, 5]
+    assert event["num_local_logits"] == 5
+
+
+def test_sampler_shard_event_rejects_wrong_local_owner() -> None:
+    with pytest.raises(ValueError, match="persistent-row ownership"):
+        make_sampler_batch_shard_event(
+            step_id=2,
+            tp_rank=0,
+            tp_size=2,
+            global_request_ids=["A", "B"],
+            global_persistent_rows=[0, 1],
+            local_request_ids=["B"],
+            local_persistent_rows=[1],
+            num_logits_per_rank=[1, 1],
+            num_local_logits=1,
+            max_num_reqs_per_rank=1,
         )
