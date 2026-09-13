@@ -81,7 +81,7 @@ The isolated trace suite reports **22 passed**. It covers:
   `.tolist()` or `synchronize()` calls, and that GPU-only sampler shard-plan
   tensors are not pulled back for tracing.
 
-The real-Scheduler/IPC CPU job reports **7 passed** (`VLLM_TARGET_DEVICE=cpu`).
+The real-Scheduler/IPC CPU job reports **8 passed** (`VLLM_TARGET_DEVICE=cpu`).
 It covers:
 
 - trace disabled on the ordinary scheduling path, including absence of the
@@ -94,6 +94,10 @@ It covers:
   `MultiprocExecutor.collective_rpc()`, and a spawned reader process attaches via
   `MessageQueue.create_from_handle()` and verifies the step ID and scheduled-token
   map after dequeue;
+- the same cross-process RPC tuple then entering the real
+  `WorkerProc._execute_worker_rpc()` dispatcher and reaching a lightweight fake
+  worker's `execute_model()` method with the trace step ID and scheduled-token map
+  intact; `output_rank=0` is exercised through the production dispatch branch;
 - a real waiting-path KV allocation failure with the request left queued;
 - request completion through `update_from_output()`, followed by the next
   Scheduler step flushing the request through `finished_req_ids`;
@@ -104,12 +108,15 @@ It covers:
   mock KV connector, verifying that `SchedulerOutput.has_sync_kv_loads` and the
   emitted `kv_connector.has_sync_kv_loads` trace field are both true.
 
-The MessageQueue fixture exercises the actual vLLM SHM/ZMQ queue serialization,
-reader attachment and cross-process dequeue path. This is stronger than a plain
-pickle round trip and validates the transport used by the default multiprocess
-executor for Scheduler RPC payloads. It still does **not** instantiate a full
-`MultiprocExecutor`/`WorkerProc`, initialize a model runner, or prove a complete
-engine Scheduler -> worker -> MRV2 event join.
+The IPC fixtures exercise the actual vLLM SHM/ZMQ queue serialization, reader
+attachment and cross-process dequeue path. The stronger fixture also executes the
+production `WorkerProc._execute_worker_rpc()` dispatch logic. To keep the test
+CPU-only and independent of compiled vLLM CPU extensions, it intentionally skips
+`WorkerProc` device/model initialization and substitutes only the final worker
+method with a lightweight echo worker. Therefore this validates transport and RPC
+dispatch of the Scheduler correlation field, but it still does **not** prove a
+complete `MultiprocExecutor`/`WorkerProc` lifecycle, real model-runner execution,
+or a Scheduler -> MRV2 event join from a live engine.
 
 The synchronous-KV fixture exercises real Scheduler connector integration but
 uses a mock connector to make the remote match/load mode deterministic. It does
@@ -122,20 +129,22 @@ markdownlint environment installation because npm returns EALLOWGIT for the
 hook's git+file package. Full hooks must be rerun in a supported environment;
 this is not an all-checks-passed claim.
 
-The current evidence establishes CPU contracts, real Scheduler integration and
-real cross-process MessageQueue preservation of the trace correlation field for
-the tested path. It does **not** establish real TP/PP/PCP worker execution, GPU
-correctness, or performance. In particular, process-local MRV2 file naming and
-TP sampler ownership are contract-tested but have not yet been exercised by a
-live multi-GPU batch-sharded-sampling run. No v0.29 overhead claim is made from
-the v0.26 benchmark results.
+The current evidence establishes CPU contracts, real Scheduler integration,
+real cross-process MessageQueue preservation and production WorkerProc RPC
+dispatch preservation of the trace correlation field for the tested path. It
+does **not** establish real TP/PP/PCP worker execution, GPU correctness, or
+performance. In particular, process-local MRV2 file naming and TP sampler
+ownership are contract-tested but have not yet been exercised by a live
+multi-GPU batch-sharded-sampling run. No v0.29 overhead claim is made from the
+v0.26 benchmark results.
 
 ## Remaining gates
 
-1. Run a full engine smoke test through `MultiprocExecutor`/`WorkerProc` and
-   verify Scheduler and MRV2 records join by `step_id`, each worker writes a
-   distinct MRV2 file, and lifecycle shutdown flushes all files cleanly. The
-   underlying MessageQueue process boundary is now validated separately.
+1. Run a full worker-lifecycle/engine smoke test with compiled vLLM runtime
+   support and verify Scheduler and MRV2 records join by `step_id`, each worker
+   writes a distinct MRV2 file, and lifecycle shutdown flushes all files cleanly.
+   MessageQueue transport and `WorkerProc._execute_worker_rpc()` dispatch are now
+   validated separately on CPU CI.
 2. Run a real TP batch-sharded-sampling GPU test and validate recorded
    `worker_rank` / `tp_rank`, request ownership and logit splits against runtime
    behavior.
