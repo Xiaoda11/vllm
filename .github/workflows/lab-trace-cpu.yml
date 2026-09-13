@@ -1,0 +1,46 @@
+name: lab-trace-cpu
+
+on:
+  push:
+    branches:
+      - "port/**"
+  pull_request:
+    branches:
+      - "exp/mrv2-scheduler-trace-v028"
+      - "exp/mrv2-scheduler-trace-v029"
+    paths:
+      - "vllm/v1/core/sched/trace.py"
+      - "vllm/v1/core/sched/trace_event.py"
+      - "vllm/v1/core/sched/scheduler.py"
+      - "lab_tests/test_trace_writer.py"
+      - "lab_tests/test_scheduler_trace_event.py"
+      - "lab_tests/test_scheduler_trace_integration.py"
+      - ".github/workflows/lab-trace-cpu.yml"
+  workflow_dispatch:
+
+jobs:
+  trace-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install minimal test dependency
+        run: |
+          pipx install uv
+          uv venv --python 3.12
+          uv pip install pytest==9.1.1
+
+      - name: Run isolated Trace CPU contracts
+        run: >-
+          .venv/bin/python -m pytest -q
+          lab_tests/test_trace_writer.py
+          lab_tests/test_scheduler_trace_event.py
+          lab_tests/test_scheduler_trace_integration.py
