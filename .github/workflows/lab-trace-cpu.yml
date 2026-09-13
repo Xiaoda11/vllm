@@ -13,10 +13,12 @@ on:
       - "vllm/v1/core/sched/trace_event.py"
       - "vllm/v1/core/sched/model_runner_trace_event.py"
       - "vllm/v1/core/sched/scheduler.py"
+      - "vllm/v1/worker/gpu/model_runner.py"
       - "lab_tests/test_trace_writer.py"
       - "lab_tests/test_scheduler_trace_event.py"
       - "lab_tests/test_scheduler_trace_integration.py"
       - "lab_tests/test_model_runner_trace_event.py"
+      - "lab_tests/test_model_runner_trace_wiring.py"
       - "tests/v1/core/test_scheduler_trace.py"
       - ".github/workflows/lab-trace-cpu.yml"
   workflow_dispatch:
@@ -48,6 +50,7 @@ jobs:
           lab_tests/test_scheduler_trace_event.py
           lab_tests/test_scheduler_trace_integration.py
           lab_tests/test_model_runner_trace_event.py
+          lab_tests/test_model_runner_trace_wiring.py
 
   real-scheduler-cpu:
     runs-on: ubuntu-latest
