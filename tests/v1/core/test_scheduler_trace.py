@@ -11,6 +11,8 @@ from vllm.v1.core.sched.trace import (
     LEGACY_SCHEDULER_TRACE_PATH_ENV,
     SCHEDULER_TRACE_PATH_ENV,
 )
+from vllm.v1.outputs import ModelRunnerOutput
+from vllm.v1.request import RequestStatus
 
 from .utils import create_requests, create_scheduler
 
@@ -24,6 +26,17 @@ def _read_trace(path: Path) -> list[dict]:
 def _disable_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(SCHEDULER_TRACE_PATH_ENV, raising=False)
     monkeypatch.delenv(LEGACY_SCHEDULER_TRACE_PATH_ENV, raising=False)
+
+
+def _model_output(req_id: str, token_id: int) -> ModelRunnerOutput:
+    return ModelRunnerOutput(
+        req_ids=[req_id],
+        req_id_to_index={req_id: 0},
+        sampled_token_ids=[[token_id]],
+        logprobs=None,
+        prompt_logprobs_dict={},
+        pooler_output=[],
+    )
 
 
 def test_real_scheduler_trace_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,3 +154,122 @@ def test_real_scheduler_trace_records_waiting_allocation_failure(
     assert failure["request_id"] == "no-space"
     assert failure["num_new_tokens"] == 32
     assert failure["num_free_blocks"] == 1
+
+
+def test_real_scheduler_trace_records_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finish through update_from_output and trace the next-step finished flush."""
+    _disable_trace(monkeypatch)
+    trace_path = tmp_path / "completion.jsonl"
+    monkeypatch.setenv(SCHEDULER_TRACE_PATH_ENV, str(trace_path))
+
+    scheduler = create_scheduler(
+        max_num_batched_tokens=32,
+        num_blocks=8,
+        block_size=16,
+    )
+    try:
+        (request,) = create_requests(
+            num_requests=1,
+            num_tokens=8,
+            max_tokens=1,
+            block_size=16,
+            req_ids=["complete"],
+        )
+        scheduler.add_request(request)
+        first_output = scheduler.schedule()
+        scheduler.update_from_output(first_output, _model_output("complete", 101))
+
+        assert request.status == RequestStatus.FINISHED_LENGTH_CAPPED
+        assert "complete" in scheduler.finished_req_ids
+        second_output = scheduler.schedule()
+        assert second_output.finished_req_ids == {"complete"}
+        assert second_output.num_scheduled_tokens == {}
+    finally:
+        scheduler.shutdown()
+
+    records = _read_trace(trace_path)
+    assert len(records) == 2
+    finish_event = records[1]
+    assert finish_event["step_id"] == 2
+    assert finish_event["finished_request_ids"] == ["complete"]
+    assert finish_event["scheduled_request_ids"] == []
+    assert finish_event["queues"]["running_before"] == []
+    assert finish_event["queues"]["running_after"] == []
+    request_event = next(
+        item for item in finish_event["requests"] if item["request_id"] == "complete"
+    )
+    assert request_event["before"] is None
+    assert request_event["after"] is None
+
+
+def test_real_scheduler_trace_records_preemption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Force real KV-pressure preemption through Scheduler.schedule()."""
+    _disable_trace(monkeypatch)
+    trace_path = tmp_path / "preemption.jsonl"
+    monkeypatch.setenv(SCHEDULER_TRACE_PATH_ENV, str(trace_path))
+
+    # Block 0 is reserved as the null block, so 11 total blocks means 10 usable.
+    # Each 80-token prompt consumes five 16-token blocks. Both can be in flight,
+    # but scheduling one more token for the first request requires preempting the
+    # second request once the cache is full.
+    scheduler = create_scheduler(
+        max_num_batched_tokens=100,
+        block_size=16,
+        num_blocks=11,
+        enable_prefix_caching=False,
+    )
+    req0, req1 = create_requests(
+        num_requests=2,
+        num_tokens=80,
+        block_size=16,
+        req_ids=["keep-running", "preempt-me"],
+    )
+
+    try:
+        scheduler.add_request(req0)
+        output0 = scheduler.schedule()
+        assert output0.num_scheduled_tokens == {"keep-running": 80}
+
+        scheduler.add_request(req1)
+        output1 = scheduler.schedule()
+        assert output1.num_scheduled_tokens == {"preempt-me": 80}
+
+        scheduler.update_from_output(output0, _model_output("keep-running", 7))
+
+        output2 = scheduler.schedule()
+        assert output2.num_scheduled_tokens == {"keep-running": 1}
+        assert output2.preempted_req_ids == {"preempt-me"}
+        assert req1.status == RequestStatus.PREEMPTED
+        assert len(scheduler.running) == 1
+        assert scheduler.running[0] == req0
+
+        # Match the real overlapping-batch behavior: output from the preempted
+        # in-flight request can still arrive and must be consumed safely.
+        scheduler.update_from_output(output1, _model_output("preempt-me", 42))
+        assert list(req1.output_token_ids) == [42]
+    finally:
+        scheduler.shutdown()
+
+    records = _read_trace(trace_path)
+    assert len(records) == 3
+    preempt_event = records[2]
+    assert preempt_event["step_id"] == 3
+    assert preempt_event["preempted_request_ids"] == ["preempt-me"]
+    assert preempt_event["scheduled_request_ids"] == ["keep-running"]
+    assert preempt_event["queues"]["running_before"] == [
+        "keep-running",
+        "preempt-me",
+    ]
+    assert preempt_event["queues"]["running_after"] == ["keep-running"]
+    assert "preempt-me" in preempt_event["queues"]["waiting_after"]
+
+    request_event = next(
+        item for item in preempt_event["requests"] if item["request_id"] == "preempt-me"
+    )
+    assert request_event["before"]["status"] == "RUNNING"
+    assert request_event["after"]["status"] == "PREEMPTED"
+    assert any(request_event["freed_block_ids"])
