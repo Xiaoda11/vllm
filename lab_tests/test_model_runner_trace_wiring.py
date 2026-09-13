@@ -49,6 +49,10 @@ def _named_call(method: ast.FunctionDef, name: str) -> ast.Call:
     )
 
 
+def _keyword(call: ast.Call, name: str) -> ast.expr:
+    return next(keyword.value for keyword in call.keywords if keyword.arg == name)
+
+
 def _assert_trace_call_is_cpu_only(call: ast.Call) -> None:
     source = ast.unparse(call)
     for forbidden in (".item(", ".cpu(", ".tolist(", "synchronize("):
@@ -62,11 +66,33 @@ def test_model_runner_trace_lifecycle_is_wired() -> None:
     shutdown = _method(RUNNER_PATH, "GPUModelRunner", "shutdown")
 
     assert "create_model_runner_trace_writer" in _called_names(init)
+    assert "get_world_group" in _called_names(init)
     assert "make_model_runner_batch_event" in _called_names(prepare)
     assert "make_sampler_batch_shard_event" in _called_names(sample)
     assert "record" in _called_names(prepare)
     assert "record" in _called_names(sample)
     assert "close" in _called_names(shutdown)
+
+
+def test_worker_rank_lookup_is_trace_guarded() -> None:
+    init = _method(RUNNER_PATH, "GPUModelRunner", "__init__")
+    rank_assignment = next(
+        node
+        for node in ast.walk(init)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Attribute)
+            and target.attr == "model_runner_trace_rank"
+            for target in node.targets
+        )
+    )
+    assert isinstance(rank_assignment.value, ast.IfExp)
+    assert "model_runner_trace_writer is not None" in ast.unparse(
+        rank_assignment.value.test
+    )
+    assert "get_world_group().rank" == ast.unparse(rank_assignment.value.body)
+    assert isinstance(rank_assignment.value.orelse, ast.Constant)
+    assert rank_assignment.value.orelse.value is None
 
 
 def test_scheduler_correlation_id_is_trace_guarded() -> None:
@@ -109,7 +135,7 @@ def test_runner_correlation_stays_on_batch_instances() -> None:
     assert "self.scheduler_trace_step_id" not in sample_source
 
 
-def test_runner_trace_event_arguments_are_cpu_only() -> None:
+def test_runner_trace_event_arguments_are_cpu_only_and_ranked() -> None:
     prepare = _method(RUNNER_PATH, "GPUModelRunner", "prepare_inputs")
     sample = _method(RUNNER_PATH, "GPUModelRunner", "sample")
 
@@ -117,6 +143,9 @@ def test_runner_trace_event_arguments_are_cpu_only() -> None:
     shard_call = _named_call(sample, "make_sampler_batch_shard_event")
     _assert_trace_call_is_cpu_only(batch_call)
     _assert_trace_call_is_cpu_only(shard_call)
+
+    assert ast.unparse(_keyword(batch_call, "worker_rank")) == "trace_rank"
+    assert ast.unparse(_keyword(shard_call, "worker_rank")) == "trace_rank"
 
     shard_source = ast.unparse(shard_call)
     # GPU-only shard-plan surfaces must not be pulled back just for tracing.
