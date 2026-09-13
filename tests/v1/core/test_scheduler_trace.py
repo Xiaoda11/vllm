@@ -13,7 +13,7 @@ from vllm.v1.core.sched.trace import (
 
 from .utils import create_requests, create_scheduler
 
-pytestmark = pytest.mark.cpu_test
+pytestmark = [pytest.mark.cpu_test, pytest.mark.skip_global_cleanup]
 
 
 def _read_trace(path: Path) -> list[dict]:
