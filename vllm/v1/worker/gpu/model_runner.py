@@ -35,6 +35,7 @@ from vllm.config.compilation import CUDAGraphMode
 from vllm.distributed.parallel_state import (
     get_dcp_group,
     get_pp_group,
+    get_world_group,
 )
 from vllm.forward_context import BatchDescriptor, set_forward_context
 from vllm.logger import init_logger
@@ -192,6 +193,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.observability_config = vllm_config.observability_config
         self.jit_warmup_registry = JitWarmupRegistry(vllm_config)
         self.model_runner_trace_writer = create_model_runner_trace_writer()
+        self.model_runner_trace_rank = (
+            get_world_group().rank
+            if self.model_runner_trace_writer is not None
+            else None
+        )
 
         self.device = device
         self.dtype = self.model_config.dtype
@@ -1368,10 +1374,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         trace_writer = self.model_runner_trace_writer
         trace_step_id = getattr(scheduler_output, "scheduler_trace_step_id", 0)
         if trace_writer is not None:
+            trace_rank = self.model_runner_trace_rank
+            assert trace_rank is not None
             setattr(input_batch, "scheduler_trace_step_id", trace_step_id)
             trace_writer.record(
                 make_model_runner_batch_event(
                     step_id=trace_step_id,
+                    worker_rank=trace_rank,
                     request_ids=req_ids,
                     persistent_rows=idx_mapping_np,
                     num_scheduled_tokens=num_scheduled_tokens_upper_bound,
@@ -1442,11 +1451,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
             trace_writer = self.model_runner_trace_writer
             if trace_writer is not None:
+                trace_rank = self.model_runner_trace_rank
+                assert trace_rank is not None
                 trace_writer.record(
                     make_sampler_batch_shard_event(
                         step_id=getattr(
                             global_input_batch, "scheduler_trace_step_id", 0
                         ),
+                        worker_rank=trace_rank,
                         tp_rank=self.batch_sharder.tp_rank,
                         tp_size=shard_metadata.tp_size,
                         global_request_ids=global_input_batch.req_ids,
